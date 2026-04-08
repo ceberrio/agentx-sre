@@ -24,8 +24,8 @@ from app.observability import tracing
 from app.observability.metrics import incidents_blocked_total
 from app.orchestration.agents.intake_guard.state import IntakeGuardState
 from app.orchestration.agents.intake_guard.tools import (
+    apply_pii_layer,
     detect_injection_markers,
-    detect_pii,
     is_off_topic,
 )
 from app.security.input_sanitizer import sanitize
@@ -82,17 +82,25 @@ class IntakeGuardAgent(BaseAgent):
             )
             return state
 
-        # Layer 1b: PII detection
-        pii_tags = detect_pii(combined)
-        if pii_tags:
+        # Layer 1b: PII layer — redact emails/phones/SSNs/cards; hard-block credentials.
+        # Emails and standard PII are redacted (not blocked) so legitimate SRE incidents
+        # that happen to contain an email address are not rejected. Actual credentials
+        # (AWS keys, GitHub tokens, Bearer tokens, PEM blocks) are hard-blocked because
+        # they must never reach the LLM (SEC-MJ-005).
+        redacted_combined, credential_tags = apply_pii_layer(combined)
+        if credential_tags:
             state["blocked"] = True
-            state["blocked_reason"] = f"pii_detected:{','.join(pii_tags)}"
+            state["blocked_reason"] = f"credential_detected:{','.join(credential_tags)}"
             log.warning(
-                "intake_guard.pii_detected",
-                extra={"incident_id": incident.id, "tags": pii_tags},
+                "intake_guard.credential_detected",
+                extra={"incident_id": incident.id, "tags": credential_tags},
             )
             incidents_blocked_total.labels(layer="heuristic").inc()
             return state
+
+        # Replace combined with the redacted version so downstream layers
+        # (injection detection, LLM judge) never see raw PII.
+        combined = redacted_combined
 
         # Layer 2: Heuristic injection
         if detect_injection_markers(combined):
@@ -131,7 +139,9 @@ class IntakeGuardAgent(BaseAgent):
         """Layer 4: LLM-based judge for ambiguous content."""
         proj = state["projection"]
         incident = proj.incident
-        combined = f"{incident.title}\n{incident.description}"
+        # Use redacted text — PII was already stripped in _deterministic_checks.
+        from app.security.input_sanitizer import redact_pii
+        combined = redact_pii(f"{incident.title}\n{incident.description}")
 
         try:
             verdict = await self.container.llm.classify_injection(combined)
@@ -164,12 +174,15 @@ class IntakeGuardAgent(BaseAgent):
                     extra={"incident_id": incident.id, "score": verdict.score},
                 )
         except Exception as exc:  # noqa: BLE001
-            # Fail-open on LLM judge error: let the incident through
+            # Fail-closed on LLM judge error: block the incident to prevent
+            # an attacker from triggering exceptions to bypass Layer 4 (SEC-CR-003).
             log.warning(
                 "intake_guard.llm_judge_failed",
                 extra={"incident_id": incident.id, "error": str(exc)},
             )
-            state["blocked"] = False
+            state["blocked"] = True
+            state["blocked_reason"] = "llm_judge_unavailable"
+            incidents_blocked_total.labels(layer="llm_judge").inc()
 
         return state
 

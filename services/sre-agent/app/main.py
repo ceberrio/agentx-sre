@@ -13,11 +13,12 @@ from __future__ import annotations
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pathlib import Path
 
+from app.api.deps import require_api_key
 from app.api.routes_feedback import router as feedback_router
 from app.api.routes_health import router as health_router
 from app.api.routes_incidents import router as incidents_router
@@ -76,10 +77,12 @@ except ImportError:
     log.warning("prometheus_client not installed — /metrics disabled")
 
 # ----- API routers -----
+# Health and metrics are intentionally exempt from authentication — they must
+# be reachable by load-balancers and monitoring systems without credentials.
 app.include_router(health_router)
-app.include_router(incidents_router)
-app.include_router(webhooks_router)
-app.include_router(feedback_router)
+app.include_router(incidents_router, dependencies=[Depends(require_api_key)])
+app.include_router(webhooks_router, dependencies=[Depends(require_api_key)])
+app.include_router(feedback_router, dependencies=[Depends(require_api_key)])
 
 # ----- UI routes -----
 try:

@@ -3,19 +3,23 @@
 These are pure functions, not LangGraph tools. They're cheap and run first
 to short-circuit obviously bad input before invoking the LLM judge.
 
-Layer 1 — PII detection
-Layer 2 — Injection marker detection (delegates to security.prompt_injection)
-Layer 3 — Off-topic heuristic
+Layer 1a — PII redaction (SEC-MJ-005): emails/phones/SSNs/cards are replaced
+           with typed placeholders; the redacted text is passed downstream.
+Layer 1b — Credential hard-block: AWS keys, GitHub tokens, Bearer tokens, PEM
+           blocks trigger an immediate block — credentials must never reach LLM.
+Layer 2  — Injection marker detection (delegates to security.prompt_injection)
+Layer 3  — Off-topic heuristic
 """
 from __future__ import annotations
 
 import re
 
 from app.domain.entities import Incident
+from app.security.input_sanitizer import contains_credentials, redact_pii
 from app.security.prompt_injection import detect_heuristics
 
 # ---------------------------------------------------------------------------
-# PII patterns (Layer 1)
+# PII tags for legacy detect_pii() surface (still used by agent.py for logging)
 # ---------------------------------------------------------------------------
 
 _PII_PATTERNS: list[tuple[str, str]] = [
@@ -47,10 +51,31 @@ _ESHOP_KEYWORDS = {
 }
 
 
+def apply_pii_layer(text: str) -> tuple[str, list[str]]:
+    """Apply the PII layer (SEC-MJ-005).
+
+    Returns (redacted_text, credential_tags) where:
+    - redacted_text has emails/phones/SSNs/cards replaced with placeholders.
+    - credential_tags is non-empty when a hard-block credential is detected.
+
+    Callers must hard-block if credential_tags is non-empty.
+    """
+    credential_tags: list[str] = []
+    if contains_credentials(text):
+        credential_tags.append("credential")
+    redacted = redact_pii(text)
+    return redacted, credential_tags
+
+
 def detect_pii(text: str) -> list[str]:
     """Return a list of PII category tags found in the text.
 
-    Empty list means clean.
+    This function is retained for backward compatibility with existing tests and
+    the agent's logging path. For the security-enforcement path, use
+    apply_pii_layer() instead which distinguishes redactable PII from
+    hard-block credentials.
+
+    Empty list means no PII detected.
     """
     if not text:
         return []

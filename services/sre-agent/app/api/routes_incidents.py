@@ -7,6 +7,7 @@ import uuid
 from fastapi import APIRouter, Form, HTTPException, UploadFile
 
 from app.domain.entities import Incident
+from app.infrastructure.config import settings
 from app.infrastructure.container import get_container
 from app.orchestration.orchestrator import (
     CaseState,
@@ -20,6 +21,24 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/incidents")
 
 
+async def _read_limited(upload: UploadFile, max_bytes: int) -> bytes:
+    """Stream-read an upload file, aborting if it exceeds max_bytes (SEC-MJ-007).
+
+    Reading the entire file into RAM before any size check would allow an
+    attacker to exhaust container memory with a crafted multipart request.
+    This helper reads in 64 KiB chunks and raises HTTP 413 as soon as the
+    running total exceeds the configured limit.
+    """
+    chunks: list[bytes] = []
+    total = 0
+    while chunk := await upload.read(65536):
+        total += len(chunk)
+        if total > max_bytes:
+            raise HTTPException(status_code=413, detail="Upload exceeds size limit")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
 @router.post("")
 async def create_incident(
     reporter_email: str = Form(...),
@@ -29,6 +48,17 @@ async def create_incident(
     image: UploadFile | None = None,
 ) -> dict:
     container = get_container()
+    max_bytes = settings.max_upload_size_mb * 1024 * 1024
+
+    log_text: str | None = None
+    if log_file is not None:
+        raw = await _read_limited(log_file, max_bytes)
+        log_text = raw.decode("utf-8", errors="replace")
+
+    image_bytes: bytes | None = None
+    if image is not None:
+        image_bytes = await _read_limited(image, max_bytes)
+
     incident = Incident(
         id=str(uuid.uuid4()),
         reporter_email=reporter_email,
@@ -36,8 +66,8 @@ async def create_incident(
         description=description,
         has_log=log_file is not None,
         has_image=image is not None,
-        log_text=(await log_file.read()).decode("utf-8", errors="replace") if log_file else None,
-        image_bytes=await image.read() if image else None,
+        log_text=log_text,
+        image_bytes=image_bytes,
     )
 
     # Persist the incident before running the pipeline so it is retrievable

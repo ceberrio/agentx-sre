@@ -68,6 +68,10 @@ class Settings(BaseSettings):
     max_upload_size_mb: int = 5
     guardrails_llm_judge_enabled: bool = True
 
+    # ----- API authentication (SEC-CR-001) -----
+    # Set SRE_API_KEY in the environment for any non-local deployment.
+    api_key: str = "sre-demo-key"
+
     @model_validator(mode="after")
     def _reject_stub_in_production(self) -> "Settings":
         """Prevent accidental stub usage in production — CR-005."""
