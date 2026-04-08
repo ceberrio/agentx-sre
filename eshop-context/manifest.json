@@ -1,0 +1,47 @@
+{
+  "version": "1.0.0",
+  "description": "eShop on Containers curated SRE knowledge base",
+  "created_at": "2026-04-07",
+  "chunk_strategy": "one_file_per_topic",
+  "max_tokens_per_chunk": 800,
+  "files": [
+    {
+      "file": "curated/01-architecture-overview.md",
+      "title": "eShop Architecture Overview",
+      "topics": ["architecture", "services", "communication", "failure-modes"],
+      "priority": "high"
+    },
+    {
+      "file": "curated/02-ordering-service.md",
+      "title": "Ordering Service Runbook",
+      "topics": ["ordering", "sql-server", "eventbus", "502", "timeout"],
+      "priority": "high"
+    },
+    {
+      "file": "curated/03-catalog-service.md",
+      "title": "Catalog Service Runbook",
+      "topics": ["catalog", "postgres", "redis", "cache", "latency"],
+      "priority": "high"
+    },
+    {
+      "file": "curated/04-identity-service.md",
+      "title": "Identity Service Runbook",
+      "topics": ["identity", "auth", "jwt", "401", "login", "sql-server"],
+      "priority": "medium"
+    },
+    {
+      "file": "curated/05-basket-payment.md",
+      "title": "Basket and Payment Runbooks",
+      "topics": ["basket", "redis", "payment", "503", "cart"],
+      "priority": "medium"
+    },
+    {
+      "file": "curated/06-kubernetes-networking.md",
+      "title": "Kubernetes and Networking Runbook",
+      "topics": ["kubernetes", "k8s", "pod", "dns", "network", "oom", "crashloop"],
+      "priority": "high"
+    }
+  ],
+  "total_files": 6,
+  "total_topics": 28
+}

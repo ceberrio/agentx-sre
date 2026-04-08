@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SRE Incident Triage Agent</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+  <style>
+    .spinner { animation: spin 1s linear infinite; }
+    @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+    .htmx-request .loading-indicator { display: flex !important; }
+    .htmx-request .submit-btn { display: none !important; }
+  </style>
+</head>
+<body class="min-h-full bg-gray-950 text-gray-100 font-mono">
+
+  <!-- Header -->
+  <header class="border-b border-gray-800 px-6 py-4 flex items-center gap-3">
+    <div class="w-3 h-3 rounded-full bg-red-500"></div>
+    <div class="w-3 h-3 rounded-full bg-yellow-500"></div>
+    <div class="w-3 h-3 rounded-full bg-green-500"></div>
+    <span class="ml-4 text-green-400 font-bold tracking-widest text-sm">SRE INCIDENT TRIAGE AGENT v0.2</span>
+    <span class="ml-auto text-xs text-gray-500">AgentX Hackathon — SoftServe 2026</span>
+  </header>
+
+  <main class="max-w-4xl mx-auto px-6 py-10">
+
+    <!-- Title -->
+    <div class="mb-8">
+      <h1 class="text-2xl font-bold text-green-400">
+        <span class="text-gray-500">$</span> submit_incident
+      </h1>
+      <p class="text-gray-400 text-sm mt-1">
+        Submit an SRE incident for automated triage, ticket creation, and team notification.
+        Powered by Gemini 2.0 Flash + LangGraph multi-agent pipeline.
+      </p>
+    </div>
+
+    <!-- Form -->
+    <form
+      hx-post="/ui/submit"
+      hx-target="#result"
+      hx-swap="innerHTML"
+      hx-indicator="#form-wrapper"
+      enctype="multipart/form-data"
+      class="space-y-5"
+      id="form-wrapper"
+    >
+      <!-- Reporter Email -->
+      <div>
+        <label class="block text-xs text-gray-400 mb-1 uppercase tracking-widest">Reporter Email *</label>
+        <input
+          type="email"
+          name="reporter_email"
+          required
+          placeholder="you@company.com"
+          class="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100
+                 focus:outline-none focus:border-green-500 placeholder-gray-600"
+        />
+      </div>
+
+      <!-- Title -->
+      <div>
+        <label class="block text-xs text-gray-400 mb-1 uppercase tracking-widest">Incident Title *</label>
+        <input
+          type="text"
+          name="title"
+          required
+          maxlength="200"
+          placeholder="e.g. Ordering service 502 after deploy v2.3.1"
+          class="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100
+                 focus:outline-none focus:border-green-500 placeholder-gray-600"
+        />
+      </div>
+
+      <!-- Description -->
+      <div>
+        <label class="block text-xs text-gray-400 mb-1 uppercase tracking-widest">Description *</label>
+        <textarea
+          name="description"
+          required
+          rows="6"
+          maxlength="4000"
+          placeholder="Describe what happened, when it started, and initial symptoms..."
+          class="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100
+                 focus:outline-none focus:border-green-500 placeholder-gray-600 resize-none"
+        ></textarea>
+      </div>
+
+      <!-- Attachments -->
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-xs text-gray-400 mb-1 uppercase tracking-widest">Log File (optional)</label>
+          <input
+            type="file"
+            name="log_file"
+            accept=".txt,.log,.json,.yaml,.yml"
+            class="w-full text-xs text-gray-400 file:mr-3 file:py-1 file:px-3
+                   file:rounded file:border-0 file:text-xs file:font-semibold
+                   file:bg-gray-800 file:text-green-400 hover:file:bg-gray-700"
+          />
+        </div>
+        <div>
+          <label class="block text-xs text-gray-400 mb-1 uppercase tracking-widest">Screenshot (optional)</label>
+          <input
+            type="file"
+            name="image"
+            accept="image/*"
+            class="w-full text-xs text-gray-400 file:mr-3 file:py-1 file:px-3
+                   file:rounded file:border-0 file:text-xs file:font-semibold
+                   file:bg-gray-800 file:text-green-400 hover:file:bg-gray-700"
+          />
+        </div>
+      </div>
+
+      <!-- Submit -->
+      <div class="flex items-center gap-4 pt-2">
+        <button
+          type="submit"
+          class="submit-btn bg-green-600 hover:bg-green-500 text-black font-bold
+                 py-2 px-6 rounded text-sm transition-colors"
+        >
+          Run Triage Pipeline →
+        </button>
+
+        <!-- Loading indicator -->
+        <div class="loading-indicator hidden items-center gap-2 text-yellow-400 text-sm">
+          <svg class="spinner w-4 h-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor"
+                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+          </svg>
+          <span>Running pipeline... (up to 30s)</span>
+        </div>
+      </div>
+    </form>
+
+    <!-- Pipeline stages indicator -->
+    <div class="mt-6 flex gap-2 text-xs text-gray-600">
+      <span class="border border-gray-800 rounded px-2 py-1">1. IntakeGuard</span>
+      <span class="text-gray-700">→</span>
+      <span class="border border-gray-800 rounded px-2 py-1">2. RAG Search</span>
+      <span class="text-gray-700">→</span>
+      <span class="border border-gray-800 rounded px-2 py-1">3. Triage LLM</span>
+      <span class="text-gray-700">→</span>
+      <span class="border border-gray-800 rounded px-2 py-1">4. Ticket Create</span>
+      <span class="text-gray-700">→</span>
+      <span class="border border-gray-800 rounded px-2 py-1">5. Notify Team</span>
+    </div>
+
+    <!-- Result area -->
+    <div id="result" class="mt-8"></div>
+
+  </main>
+
+  <!-- Footer -->
+  <footer class="border-t border-gray-800 px-6 py-3 text-xs text-gray-600 flex justify-between">
+    <span>Hexagonal Architecture + LangGraph + Gemini 2.0 Flash</span>
+    <a href="/health" class="hover:text-green-400">/health</a>
+    <a href="/metrics" class="hover:text-green-400">/metrics</a>
+    <a href="/docs" class="hover:text-green-400">/docs</a>
+  </footer>
+
+</body>
+</html>

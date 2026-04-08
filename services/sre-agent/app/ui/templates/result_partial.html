@@ -1,0 +1,129 @@
+{% if error %}
+<!-- Error state -->
+<div class="border border-red-800 rounded-lg p-5 bg-red-950/30">
+  <div class="flex items-center gap-2 text-red-400 font-bold mb-2">
+    <span>✗</span>
+    <span>Pipeline Error</span>
+  </div>
+  <p class="text-sm text-red-300">{{ error }}</p>
+</div>
+
+{% elif blocked %}
+<!-- Blocked by IntakeGuard -->
+<div class="border border-orange-800 rounded-lg p-5 bg-orange-950/30">
+  <div class="flex items-center gap-2 text-orange-400 font-bold mb-3">
+    <span>⊘</span>
+    <span>INCIDENT BLOCKED BY INTAKEGUARD</span>
+  </div>
+  <div class="text-sm space-y-1">
+    <div><span class="text-gray-500">incident_id:</span> <span class="text-gray-300 font-mono">{{ incident_id }}</span></div>
+    <div><span class="text-gray-500">reason:</span> <span class="text-orange-300">{{ blocked_reason or "policy_violation" }}</span></div>
+    <div><span class="text-gray-500">status:</span> <span class="text-orange-400">INTAKE_BLOCKED</span></div>
+  </div>
+  <p class="mt-3 text-xs text-gray-500">
+    The incident was rejected by the 5-layer guardrail system.
+    Check for prompt injection, PII, or off-topic content.
+  </p>
+</div>
+
+{% else %}
+<!-- Success state -->
+<div class="border border-green-800 rounded-lg overflow-hidden">
+
+  <!-- Header bar -->
+  <div class="bg-green-950/40 border-b border-green-800 px-5 py-3 flex items-center justify-between">
+    <div class="flex items-center gap-2 text-green-400 font-bold">
+      <span>✓</span>
+      <span>TRIAGE COMPLETE</span>
+    </div>
+    <span class="text-xs text-gray-500 font-mono">{{ incident_id }}</span>
+  </div>
+
+  <div class="p-5 space-y-5">
+
+    <!-- Severity badge -->
+    {% if triage %}
+    <div class="flex items-start gap-4">
+      <div class="flex-shrink-0">
+        {% set sev = triage.severity.value %}
+        {% if sev == "P1" %}
+          <span class="inline-block bg-red-600 text-white font-bold text-lg px-4 py-1 rounded">{{ sev }} CRITICAL</span>
+        {% elif sev == "P2" %}
+          <span class="inline-block bg-orange-500 text-white font-bold text-lg px-4 py-1 rounded">{{ sev }} HIGH</span>
+        {% elif sev == "P3" %}
+          <span class="inline-block bg-yellow-500 text-black font-bold text-lg px-4 py-1 rounded">{{ sev }} MEDIUM</span>
+        {% else %}
+          <span class="inline-block bg-blue-600 text-white font-bold text-lg px-4 py-1 rounded">{{ sev }} LOW</span>
+        {% endif %}
+      </div>
+      <div class="text-xs text-gray-500">
+        <div>confidence: <span class="text-gray-300">{{ "%.0f" | format(triage.confidence * 100) }}%</span></div>
+        <div>model: <span class="text-gray-300">{{ triage.model or "gemini-2.0-flash" }}</span></div>
+        {% if triage.used_fallback %}<div class="text-yellow-400">⚠ fallback provider used</div>{% endif %}
+        {% if triage.degraded %}<div class="text-red-400">⚠ degraded mode</div>{% endif %}
+      </div>
+    </div>
+
+    <!-- Summary -->
+    <div>
+      <div class="text-xs text-gray-500 uppercase tracking-widest mb-1">Summary</div>
+      <p class="text-sm text-gray-200 leading-relaxed">{{ triage.summary }}</p>
+    </div>
+
+    <!-- Root cause -->
+    <div>
+      <div class="text-xs text-gray-500 uppercase tracking-widest mb-1">Suspected Root Cause</div>
+      <p class="text-sm text-gray-300 bg-gray-900 rounded p-3 border border-gray-800 leading-relaxed">
+        {{ triage.suspected_root_cause }}
+      </p>
+    </div>
+
+    <!-- Owners -->
+    {% if triage.suggested_owners %}
+    <div>
+      <div class="text-xs text-gray-500 uppercase tracking-widest mb-1">Suggested Owners</div>
+      <div class="flex gap-2 flex-wrap">
+        {% for owner in triage.suggested_owners %}
+          <span class="bg-gray-800 border border-gray-700 text-green-400 text-xs rounded px-2 py-1">@{{ owner }}</span>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    {% if triage.needs_human_review %}
+    <div class="border border-yellow-700 bg-yellow-950/30 rounded p-3 text-sm text-yellow-300">
+      ⚠ Human review recommended — confidence below threshold.
+    </div>
+    {% endif %}
+    {% endif %} {# end if triage #}
+
+    <!-- Ticket info -->
+    {% if ticket %}
+    <div class="border-t border-gray-800 pt-4">
+      <div class="text-xs text-gray-500 uppercase tracking-widest mb-2">Ticket Created</div>
+      <div class="bg-gray-900 rounded p-3 border border-gray-800 text-sm space-y-1">
+        <div><span class="text-gray-500">ticket_id:</span> <span class="text-blue-400 font-mono">{{ ticket.id }}</span></div>
+        <div><span class="text-gray-500">provider:</span> <span class="text-gray-300">{{ ticket.provider }}</span></div>
+        <div><span class="text-gray-500">status:</span> <span class="text-green-400">{{ ticket.status.value }}</span></div>
+        {% if ticket.url %}
+        <div>
+          <span class="text-gray-500">url:</span>
+          <a href="{{ ticket.url }}" target="_blank" class="text-blue-400 hover:underline">{{ ticket.url }}</a>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Status -->
+    <div class="border-t border-gray-800 pt-4 flex items-center gap-3 text-xs text-gray-500">
+      <span>pipeline status:</span>
+      <span class="text-green-400 font-mono">{{ case_status }}</span>
+      <span class="ml-auto">
+        <a href="/ui/" class="text-gray-600 hover:text-green-400">← Submit another</a>
+      </span>
+    </div>
+
+  </div>
+</div>
+{% endif %}

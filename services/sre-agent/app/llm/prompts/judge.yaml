@@ -1,0 +1,37 @@
+name: "judge"
+version: "1.0.0"
+model_hint: "gemini-2.0-flash"
+prompt: |
+  You are an LLM-as-judge evaluating the quality of an SRE incident triage result.
+
+  GOLDEN CASE:
+  Input incident: {golden_input}
+  Expected severity: {expected_severity}
+  Expected affected components: {expected_components}
+  Expected root cause keywords: {expected_keywords}
+
+  ACTUAL TRIAGE OUTPUT:
+  Severity: {actual_severity}
+  Summary: {actual_summary}
+  Suspected root cause: {actual_root_cause}
+  Affected owners: {actual_owners}
+
+  SCORING INSTRUCTIONS:
+  1. severity_correct: true if actual severity matches expected exactly
+  2. root_cause_score: fraction of expected_keywords found in the root cause (0.0-1.0)
+  3. components_score: Jaccard similarity between expected and actual affected components
+  4. overall_score: 0.4 * severity_score + 0.4 * root_cause_score + 0.2 * components_score
+  5. judge_reasoning: 1-2 sentence justification
+  6. All float scores MUST be between 0.0 and 1.0 inclusive. Do not return percentages.
+
+  Respond with valid JSON:
+  {{
+    "severity_correct": <true|false>,
+    "severity_score": <0.0 or 1.0>,
+    "root_cause_score": <float 0.0-1.0>,
+    "components_score": <float 0.0-1.0>,
+    "overall_score": <float 0.0-1.0>,
+    "judge_reasoning": "<explanation>"
+  }}
+
+  JSON response:

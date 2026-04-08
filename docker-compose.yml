@@ -1,0 +1,128 @@
+version: "3.9"
+
+# AgentX Hackathon — SRE Incident Triage Agent
+# Single command to run the full demo: `docker compose up --build`
+#
+# Exposed host ports (architecture rule §5.10 — only these three):
+#   8000  -> sre-agent (UI + API)
+#   9000  -> mock-services (ticketing + notifications)
+#   3000  -> Langfuse UI (observability dashboard)
+#
+# Internal-only services (no host ports):
+#   app-db        (Postgres for incident persistence — sre-agent only)
+#   langfuse-db   (Postgres for Langfuse — Langfuse only)
+#
+# Langfuse stack (langfuse-web, langfuse-worker, langfuse-db, langfuse-cache,
+# langfuse-clickhouse, langfuse-minio) can be disabled by removing the
+# `observability` profile or setting LANGFUSE_ENABLED=false in .env.
+
+name: agentx-sre
+
+services:
+
+  sre-agent:
+    build: ./services/sre-agent
+    container_name: sre-agent
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      MOCK_SERVICES_URL: http://mock-services:9000
+      LANGFUSE_HOST: http://langfuse-web:3000
+      APP_DATABASE_URL: postgresql+asyncpg://sre:sre@app-db:5432/sre_agent
+      FAISS_INDEX_PATH: /data/faiss/eshop.index
+    volumes:
+      - faiss-data:/data/faiss
+      - ./eshop-context:/app/eshop-context:ro
+    depends_on:
+      mock-services:
+        condition: service_started
+      app-db:
+        condition: service_healthy
+    networks:
+      - agentx
+    restart: unless-stopped
+    command: >
+      sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+
+  app-db:
+    image: postgres:16-alpine
+    container_name: app-db
+    environment:
+      POSTGRES_USER: sre
+      POSTGRES_PASSWORD: sre
+      POSTGRES_DB: sre_agent
+    volumes:
+      - app-db-data:/var/lib/postgresql/data
+    networks:
+      - agentx
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sre -d sre_agent"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  mock-services:
+    build: ./services/mock-services
+    container_name: mock-services
+    ports:
+      - "9000:9000"
+    networks:
+      - agentx
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:9000/health').status==200 else 1)"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # ----- Observability stack (Langfuse) -----
+  # Disable by commenting this block out if you want a lighter run.
+
+  langfuse-web:
+    image: langfuse/langfuse:2
+    container_name: langfuse-web
+    depends_on:
+      langfuse-db:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgresql://langfuse:langfuse@langfuse-db:5432/langfuse
+      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:-change-me-in-prod}
+      SALT: ${LANGFUSE_SALT:-change-me-in-prod}
+      NEXTAUTH_URL: http://localhost:3000
+      TELEMETRY_ENABLED: "false"
+      LANGFUSE_INIT_ORG_ID: agentx
+      LANGFUSE_INIT_PROJECT_ID: sre-agent
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-pk-lf-demo}
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-sk-lf-demo}
+    networks:
+      - agentx
+
+  langfuse-db:
+    image: postgres:16-alpine
+    container_name: langfuse-db
+    environment:
+      POSTGRES_USER: langfuse
+      POSTGRES_PASSWORD: langfuse
+      POSTGRES_DB: langfuse
+    volumes:
+      - langfuse-db-data:/var/lib/postgresql/data
+    networks:
+      - agentx
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langfuse"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+networks:
+  agentx:
+    driver: bridge
+
+volumes:
+  langfuse-db-data:
+  app-db-data:
+  faiss-data:

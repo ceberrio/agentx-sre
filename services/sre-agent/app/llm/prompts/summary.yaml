@@ -1,0 +1,30 @@
+name: "resolution-summary"
+version: "1.0.0"
+model_hint: "gemini-2.0-flash"
+prompt: |
+  You are an SRE communication specialist. Write a brief, clear resolution
+  notification for the user who reported an incident.
+
+  INCIDENT:
+  Title: {incident_title}
+  Original description: {incident_description}
+
+  TICKET:
+  Ticket ID: {ticket_id}
+  Ticket URL: {ticket_url}
+
+  TRIAGE RESULT:
+  Severity: {severity}
+  Root cause: {root_cause}
+  Owners: {owners}
+
+  Write a user-friendly resolution notification (3-5 sentences max) that:
+  1. Confirms the incident has been resolved
+  2. Briefly explains what the issue was (in plain language, no jargon)
+  3. Mentions the ticket ID for their records
+  4. Is professional and empathetic in tone
+
+  Do NOT include any technical stack traces or internal system details.
+  Respond with just the notification text (no JSON, no headers).
+
+  Notification:
