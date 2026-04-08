@@ -25,7 +25,7 @@ from app.api.routes_webhooks import router as webhooks_router
 from app.infrastructure.config import settings
 from app.infrastructure.container import bootstrap, get_container
 from app.observability.logging import configure as configure_logging
-from app.observability.tracing import init_langfuse
+from app.observability.tracing import init_langfuse, verify_langfuse_connection
 
 log = logging.getLogger(__name__)
 
@@ -53,6 +53,7 @@ async def lifespan(app: FastAPI):
             except Exception as e:  # noqa: BLE001
                 log.warning("faiss.build_failed", extra={"error": str(e)})
 
+    verify_langfuse_connection()
     log.info("app.started", extra={"stage": "startup", "event": "app_ready"})
     yield
     # cleanup

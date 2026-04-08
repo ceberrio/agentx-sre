@@ -48,6 +48,33 @@ def get_langfuse() -> Optional[Any]:
     return _langfuse
 
 
+def verify_langfuse_connection() -> bool:
+    """Smoke-test the Langfuse connection by sending a single no-op trace.
+
+    Called once during app startup (after init_langfuse) so the demo operator
+    sees a clear SUCCESS / WARNING log instead of a silent first-request failure.
+
+    Returns True when Langfuse is reachable, False otherwise.
+    Failure is non-fatal: the app continues with tracing degraded.
+    """
+    lf = get_langfuse()
+    if lf is None:
+        log.info("langfuse.verify_skipped", extra={"reason": "langfuse_disabled"})
+        return False
+    try:
+        trace = lf.trace(name="sre.agent.startup.healthcheck", session_id="startup")
+        span = trace.span(name="sre.agent.startup.healthcheck", metadata={"ok": True})
+        span.end()
+        log.info("langfuse.verify_ok")
+        return True
+    except Exception as e:  # noqa: BLE001
+        log.warning(
+            "langfuse.verify_failed",
+            extra={"error": str(e), "hint": "Check LANGFUSE_HOST, LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY"},
+        )
+        return False
+
+
 # ---------------------------------------------------------------------------
 # Layer 1 — Infra spans (per stage)
 # Span name pattern: sre.agent.<name>.<phase>

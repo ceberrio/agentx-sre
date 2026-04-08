@@ -61,13 +61,17 @@ async def create_incident(
     severity = None
     if final_state.get("triage") is not None:
         severity = final_state["triage"].severity.value
-    return {
+    is_blocked = final_status == CaseStatus.INTAKE_BLOCKED
+    response: dict = {
         "incident_id": incident.id,
         "case_status": final_status.value if hasattr(final_status, "value") else str(final_status),
-        "blocked": final_status == CaseStatus.INTAKE_BLOCKED,
+        "blocked": is_blocked,
         "ticket_id": final_state["ticket"].id if final_state.get("ticket") else None,
         "severity": severity,
     }
+    if is_blocked:
+        response["blocked_reason"] = final_state.get("blocked_reason")
+    return response
 
 
 @router.get("")
