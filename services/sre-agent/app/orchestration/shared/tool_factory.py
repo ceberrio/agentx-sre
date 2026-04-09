@@ -53,7 +53,13 @@ class ToolFactory:
     # ---- Persistence (used by every agent) -----------------------------
 
     def make_persist_status_tool(self) -> Callable[..., Any]:
-        """Tool: persist incident status updates via IStorageProvider."""
+        """Tool: persist incident status updates via IStorageProvider.
+
+        WARNING (ARC-023): This tool MUST NOT be called from inside any agent node.
+        The API driver layer (routes_incidents.py) is the exclusive owner of
+        incident state writes. This tool exists for future infrastructure-level
+        use only (e.g., background reconciliation).
+        """
         storage_port = self._container.storage
 
         async def persist_status(incident_id: str, patch: dict[str, Any]) -> bool:

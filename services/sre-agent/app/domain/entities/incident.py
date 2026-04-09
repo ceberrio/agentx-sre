@@ -41,3 +41,14 @@ class Incident(BaseModel):
     log_text: Optional[str] = Field(default=None, exclude=True, repr=False)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    # Triage result fields — populated by the API driver after LangGraph completes (ARC-023).
+    triage_summary: Optional[str] = None
+    triage_root_cause: Optional[str] = None
+    triage_suggested_owners: Optional[list[str]] = None
+    triage_confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    triage_needs_human_review: Optional[bool] = None
+    triage_used_fallback: Optional[bool] = None
+    triage_degraded: Optional[bool] = None
+    ticket_id: Optional[str] = None
+    triaged_at: Optional[datetime] = None
+    resolved_at: Optional[datetime] = None

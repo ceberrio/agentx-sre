@@ -31,3 +31,11 @@ class ILLMProvider(ABC):
     async def generate(self, prompt: str) -> str:
         """Generate free-form text from a rendered prompt string."""
         ...
+
+    def capabilities(self) -> frozenset[str]:
+        """Return the set of capabilities this adapter supports.
+        Default: all four. Override in adapters that intentionally omit one.
+        Mandatory capabilities: triage, classify_injection, generate.
+        Optional: embed (not all providers offer an embeddings API).
+        """
+        return frozenset({"triage", "classify_injection", "embed", "generate"})

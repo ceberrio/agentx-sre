@@ -8,8 +8,10 @@ Auth (HU-P018):
 """
 from __future__ import annotations
 
+import json
 import logging
 import uuid
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
 
@@ -28,6 +30,66 @@ from app.orchestration.orchestrator import (
 log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/incidents")
+
+# CaseStatus → IncidentStatus string value (ARC-023 mapping).
+# CaseStatus is the internal graph lifecycle enum; IncidentStatus is the
+# storage-layer enum.  The two do not share a 1-to-1 mapping, so we translate
+# here at the API boundary — the single place that owns DB writes (ARC-023).
+_CASE_TO_INCIDENT_STATUS: dict = {
+    "new": "received",
+    "intake_ok": "received",
+    "triaged": "triaging",
+    "notified": "ticketed",
+    "awaiting_resolution": "ticketed",
+    "resolved": "resolved",
+    "intake_blocked": "blocked",
+    "ticketed": "ticketed",
+    "failed": "failed",
+}
+
+
+def _build_post_graph_patch(final_state: dict) -> dict:
+    """Map LangGraph terminal state to a storage patch dict (ARC-023).
+
+    Called by the API driver after graph.ainvoke() completes.
+    The API driver is the exclusive owner of all incident DB writes (ARC-023).
+    """
+    final_status = final_state.get("status", CaseStatus.NEW)
+    # hasattr guard: LangGraph can return the status as a raw string instead of
+    # a CaseStatus enum instance when deserializing checkpointed state.
+    # The guard ensures we call .value only when the enum is intact.
+    raw_status = final_status.value if hasattr(final_status, "value") else str(final_status)
+    mapped_status = _CASE_TO_INCIDENT_STATUS.get(raw_status, "received")
+    patch: dict = {
+        "status": mapped_status,
+    }
+
+    triage_result = final_state.get("triage")
+    if triage_result is not None:
+        patch.update({
+            "severity": triage_result.severity.value,
+            "triage_summary": triage_result.summary,
+            "triage_root_cause": triage_result.suspected_root_cause,
+            "triage_suggested_owners": json.dumps(triage_result.suggested_owners),
+            "triage_confidence": triage_result.confidence,
+            "triage_needs_human_review": triage_result.needs_human_review,
+            "triage_used_fallback": triage_result.used_fallback,
+            "triage_degraded": triage_result.degraded,
+            "triaged_at": datetime.now(timezone.utc),
+        })
+
+    ticket = final_state.get("ticket")
+    if ticket is not None:
+        patch["ticket_id"] = ticket.id
+
+    final_status_enum = final_state.get("status", CaseStatus.NEW)
+    if final_status_enum == CaseStatus.INTAKE_BLOCKED:
+        patch["blocked"] = True
+        blocked_reason = final_state.get("blocked_reason")
+        if blocked_reason:
+            patch["blocked_reason"] = blocked_reason
+
+    return patch
 
 
 async def _read_limited(upload: UploadFile, max_bytes: int) -> bytes:
@@ -97,16 +159,28 @@ async def create_incident(
         log.error("api.graph_invocation_failed", extra={"incident_id": incident.id, "error": str(exc)})
         raise HTTPException(status_code=500, detail="incident_processing_failed")
 
+    # Build full patch from graph final state (ARC-023: API driver owns all DB writes).
+    patch = _build_post_graph_patch(final_state)
+    severity = patch.get("severity")
     final_status = final_state.get("status", CaseStatus.NEW)
-    severity = None
-    if final_state.get("triage") is not None:
-        severity = final_state["triage"].severity.value
+    ticket = final_state.get("ticket")
+
+    try:
+        await container.storage.update_incident(incident.id, patch)
+    except ValueError:
+        raise  # programming error (disallowed field) — do not swallow
+    except Exception as persist_err:
+        log.warning(
+            "api.post_graph_persist_failed",
+            extra={"incident_id": incident.id, "error": str(persist_err)},
+        )
+
     is_blocked = final_status == CaseStatus.INTAKE_BLOCKED
     response: dict = {
         "incident_id": incident.id,
         "case_status": final_status.value if hasattr(final_status, "value") else str(final_status),
         "blocked": is_blocked,
-        "ticket_id": final_state["ticket"].id if final_state.get("ticket") else None,
+        "ticket_id": ticket.id if ticket is not None else None,
         "severity": severity,
     }
     if is_blocked:
@@ -165,10 +239,9 @@ async def resolve_incident(
     if current_user.role == UserRole.OPERATOR and incident.reporter_email != current_user.email:
         raise HTTPException(status_code=404, detail="incident_not_found")
 
-    # Look up the ticket via provider — in mock mode this round-trips through mock-services
-    # The ticket id is recovered from the incident description in the mock; in real adapters,
-    # it would be persisted alongside the incident. (See SCALING.md for migration note.)
-    ticket = await container.ticket.resolve_ticket(incident_id)
+    if not incident.ticket_id:
+        raise HTTPException(status_code=409, detail="incident_not_yet_ticketed")
+    ticket = await container.ticket.resolve_ticket(incident.ticket_id)
     graph = build_resolution_graph(container)
     state: CaseState = {
         "case_id": incident_id,
@@ -178,4 +251,21 @@ async def resolve_incident(
         "events": [],
     }
     await graph.ainvoke(state)
+
+    try:
+        await container.storage.update_incident(
+            str(incident_id),
+            {
+                "status": "resolved",
+                "resolved_at": datetime.now(timezone.utc),
+            },
+        )
+    except ValueError:
+        raise
+    except Exception as persist_err:
+        log.warning(
+            "api.resolve_persist_failed",
+            extra={"incident_id": str(incident_id), "error": str(persist_err)},
+        )
+
     return {"incident_id": incident_id, "status": "resolved"}
