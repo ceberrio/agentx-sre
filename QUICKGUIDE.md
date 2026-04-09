@@ -20,8 +20,8 @@ That's it. **No Python, no Node, no anything else** needs to be installed on the
 ### 1. Clone
 
 ```bash
-git clone https://github.com/<org>/<repo>.git
-cd <repo>
+git clone https://github.com/ceberrio/agentx-sre.git
+cd agentx-sre
 ```
 
 ### 2. Configure
