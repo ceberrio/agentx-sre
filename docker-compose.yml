@@ -31,7 +31,7 @@ services:
       VITE_API_BASE_URL: http://localhost:8000
     depends_on:
       sre-agent:
-        condition: service_started
+        condition: service_healthy
     networks:
       - agentx
     restart: unless-stopped
@@ -77,6 +77,12 @@ services:
         limits:
           memory: 1g
           cpus: '1.0'
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
     command: >
       sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
 

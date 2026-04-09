@@ -19,6 +19,7 @@ import { Spinner } from '../components/ui/Spinner'
 import { Modal } from '../components/ui/Modal'
 import { SeverityBadge, StatusBadge } from '../components/ui/Badge'
 import { FeedbackWidget } from '../components/ui/FeedbackWidget'
+import { ConfidenceMeter } from '../components/ui/ConfidenceMeter'
 import { useIncident, useResolveIncident, useSubmitFeedback } from '../api/hooks/useIncidents'
 import { SEVERITY_MAP } from '../api/types'
 import type { FeedbackRating } from '../api/types'
@@ -43,6 +44,12 @@ function DetailRow({ label, children }: { label: string; children: React.ReactNo
       <div className="text-sm text-neutral-800 font-montserrat">{children}</div>
     </div>
   )
+}
+
+function parseSuggestedOwners(raw: string | string[] | null | undefined): string[] {
+  if (!raw) return []
+  if (Array.isArray(raw)) return raw
+  try { return JSON.parse(raw as string) } catch (_e) { return [] }
 }
 
 // ---------------------------------------------------------------------------
@@ -127,7 +134,7 @@ export function IncidentDetailPage() {
 
   const isResolved = incident.status === 'resolved'
   const isBlocked = incident.blocked
-  const isTicketedOrResolved = incident.status === 'ticketed' || incident.status === 'resolved'
+  const suggestedOwners = parseSuggestedOwners(incident.triage_suggested_owners)
 
   return (
     <Layout pageTitle="Incident Detail">
@@ -239,45 +246,111 @@ export function IncidentDetailPage() {
           </div>
         </Card>
 
-        {/* Triage & Ticket — AC-02 */}
-        <Card title="Triage &amp; Ticket">
+        {/* Triage Analysis & Explainability — AC-02 */}
+        <Card title="Triage Analysis &amp; Explainability">
           <div className="space-y-4">
-            <div className="flex gap-3 p-3 bg-neutral-50 rounded-md">
-              <Info size={16} className="text-neutral-400 flex-shrink-0 mt-0.5" />
-              <p className="text-sm text-neutral-600 font-montserrat leading-relaxed">
-                Triage analysis details and ticket information are generated during pipeline
-                processing and are not stored in this API version. Check the terminal logs
-                or Langfuse for full trace details.
-              </p>
-            </div>
-
-            {isTicketedOrResolved && (
-              <div className="flex items-center gap-2 p-3 bg-semantic-success-light rounded-md border border-semantic-success">
-                <span className="text-sm font-medium text-green-800 font-montserrat">
-                  Ticket created successfully
-                </span>
-              </div>
-            )}
-
-            {/* AC-03: Resolved section */}
-            {isResolved && (
-              <div className="flex items-center gap-2 p-3 bg-semantic-success-light rounded-md border border-semantic-success">
-                <span className="text-sm font-medium text-green-800 font-montserrat">
-                  Resolution recorded — incident closed.
-                </span>
-              </div>
-            )}
-
-            {/* AC-03: Blocked reason */}
-            {isBlocked && incident.blocked_reason && (
-              <div className="p-3 bg-semantic-warning-light rounded-md border border-semantic-warning">
-                <p className="text-xs font-medium text-amber-800 font-montserrat uppercase tracking-wide mb-1">
-                  Blocked Reason
-                </p>
-                <p className="text-sm text-amber-800 font-montserrat">
-                  {incident.blocked_reason}
+            {/* When triage is not yet complete */}
+            {(incident.triage_confidence == null && !incident.triage_summary) ? (
+              <div className="flex items-center gap-3 p-3 bg-neutral-50 rounded-md">
+                <Info size={16} className="text-neutral-400 flex-shrink-0" />
+                <p className="text-sm text-neutral-600 font-montserrat">
+                  Triage in progress — results will appear once the pipeline completes.
                 </p>
               </div>
+            ) : (
+              <>
+                {/* Outcome Explainability — Confidence */}
+                {incident.triage_confidence !== null && incident.triage_confidence !== undefined && (
+                  <div>
+                    <span className="text-xs font-medium text-neutral-500 font-montserrat uppercase tracking-wide block mb-1">
+                      AI Confidence
+                    </span>
+                    <ConfidenceMeter value={incident.triage_confidence} />
+                  </div>
+                )}
+
+                {/* Status badges */}
+                <div className="flex flex-wrap gap-2">
+                  {incident.triage_needs_human_review && (
+                    <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800 font-montserrat">
+                      ⚠ Human Review Required
+                    </span>
+                  )}
+                  {incident.triage_used_fallback && (
+                    <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 font-montserrat">
+                      LLM Fallback Used
+                    </span>
+                  )}
+                  {incident.triage_degraded && (
+                    <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800 font-montserrat">
+                      Degraded Mode
+                    </span>
+                  )}
+                </div>
+
+                {/* Process Explainability — Summary */}
+                {incident.triage_summary && (
+                  <div>
+                    <span className="text-xs font-medium text-neutral-500 font-montserrat uppercase tracking-wide block mb-1">
+                      Summary
+                    </span>
+                    <p className="text-sm text-neutral-800 font-montserrat leading-relaxed bg-neutral-50 rounded-md p-3">
+                      {incident.triage_summary}
+                    </p>
+                  </div>
+                )}
+
+                {/* Input Explainability — Root Cause */}
+                {incident.triage_root_cause && (
+                  <div>
+                    <span className="text-xs font-medium text-neutral-500 font-montserrat uppercase tracking-wide block mb-1">
+                      Suspected Root Cause
+                    </span>
+                    <p className="text-sm text-neutral-800 font-montserrat leading-relaxed bg-neutral-50 rounded-md p-3">
+                      {incident.triage_root_cause}
+                    </p>
+                  </div>
+                )}
+
+                {/* Suggested Owners */}
+                {suggestedOwners.length > 0 && (
+                  <div>
+                    <span className="text-xs font-medium text-neutral-500 font-montserrat uppercase tracking-wide block mb-1">
+                      Suggested Owners
+                    </span>
+                    <div className="flex flex-wrap gap-1">
+                      {suggestedOwners.map((owner) => (
+                        <span
+                          key={owner}
+                          className="inline-flex items-center px-2 py-0.5 rounded text-xs bg-brand-lighter text-brand-primary font-montserrat"
+                        >
+                          {owner}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Ticket info */}
+                {incident.ticket_id && (
+                  <div>
+                    <span className="text-xs font-medium text-neutral-500 font-montserrat uppercase tracking-wide block mb-1">
+                      Ticket ID
+                    </span>
+                    <span className="inline-flex items-center px-2 py-1 rounded bg-semantic-success-light text-green-800 text-xs font-mono font-medium">
+                      {incident.ticket_id}
+                    </span>
+                  </div>
+                )}
+
+                {/* Langfuse trace note */}
+                <div className="flex items-start gap-2 pt-2 border-t border-neutral-100">
+                  <Info size={13} className="text-neutral-300 flex-shrink-0 mt-0.5" />
+                  <p className="text-xs text-neutral-400 font-montserrat">
+                    Full trace (LLM calls, RAG hits, token costs) available in Langfuse — search by incident ID.
+                  </p>
+                </div>
+              </>
             )}
           </div>
         </Card>

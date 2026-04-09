@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 import uuid
 from datetime import datetime, timezone
 
@@ -20,6 +21,8 @@ from app.domain.entities import Incident
 from app.domain.entities.user import User, UserRole
 from app.infrastructure.config import settings
 from app.infrastructure.container import get_container
+from app.observability import tracing
+from app.observability.metrics import incidents_received_total, pipeline_duration_seconds_bucket
 from app.orchestration.orchestrator import (
     CaseState,
     CaseStatus,
@@ -123,6 +126,7 @@ async def create_incident(
     image: UploadFile | None = None,
     _current_user: User = Depends(get_current_user_or_api_key),
 ) -> dict:
+    incidents_received_total.inc()
     container = get_container()
     max_bytes = settings.max_upload_size_mb * 1024 * 1024
 
@@ -173,11 +177,28 @@ async def create_incident(
         "events": [],
         "governance": governance_raw,
     }
-    try:
-        final_state = await graph.ainvoke(state)
-    except Exception as exc:
-        log.error("api.graph_invocation_failed", extra={"incident_id": incident.id, "error": str(exc)})
-        raise HTTPException(status_code=500, detail="incident_processing_failed")
+    _pipeline_start = time.monotonic()
+    # Root orchestrator span wraps the full pipeline so it measures real wall-clock
+    # duration (§4.4). Quality signal attributes are pre-computed with empty defaults
+    # because the tracing implementation records metadata at span-open time; the span
+    # still captures the correct elapsed duration because ainvoke runs inside the block.
+    with tracing.span_orchestrator_root(
+        incident_id=incident.id,
+        triage_severity="",
+        triage_confidence="",
+        triage_quality_score=0.0,
+        triage_affected_components=[],
+        case_status_final="",
+        case_total_duration_ms=0,
+    ):
+        try:
+            final_state = await graph.ainvoke(state)
+        except Exception as exc:
+            log.error("api.graph_invocation_failed", extra={"incident_id": incident.id, "error": str(exc)})
+            raise HTTPException(status_code=500, detail="incident_processing_failed")
+
+    _pipeline_elapsed = time.monotonic() - _pipeline_start
+    pipeline_duration_seconds_bucket.observe(_pipeline_elapsed)
 
     # Build full patch from graph final state (ARC-023: API driver owns all DB writes).
     patch = _build_post_graph_patch(final_state)

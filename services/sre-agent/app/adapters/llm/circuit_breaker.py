@@ -22,6 +22,7 @@ from app.domain.entities import (
     TriageResult,
 )
 from app.domain.ports import ILLMProvider
+from app.observability.metrics import llm_fallback_activations_total
 
 log = logging.getLogger(__name__)
 
@@ -106,6 +107,10 @@ class LLMCircuitBreaker(ILLMProvider):
                     self._fallback.triage(prompt), timeout=self._timeout_s
                 )
                 result.used_fallback = True
+                llm_fallback_activations_total.labels(
+                    from_provider=self._primary.name,
+                    to_provider=self._fallback.name,
+                ).inc()
                 log.info("triage.fallback_used", extra={"provider": self._fallback.name})
                 return result
             except Exception as e:  # noqa: BLE001

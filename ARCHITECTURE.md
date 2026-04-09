@@ -71,8 +71,8 @@ The **domain** (business logic of incident triage) does not know that LLMs, HTTP
 | Sequence — E2E flow | [`docs/diagrams/sequence-e2e-flow.md`](docs/diagrams/sequence-e2e-flow.md) |
 | Observability layers | [`docs/diagrams/observability-layers.md`](docs/diagrams/observability-layers.md) |
 | Eval pipeline | [`docs/diagrams/eval-pipeline.md`](docs/diagrams/eval-pipeline.md) |
-| Governance flow (NEW — v3) | [`docs/diagrams/governance-flow.md`](docs/diagrams/governance-flow.md) |
-| Explainability flow (NEW — v3) | [`docs/diagrams/explainability-flow.md`](docs/diagrams/explainability-flow.md) |
+| Governance flow | _Not implemented in v4 — deferred to post-hackathon v5_ |
+| Explainability flow | _Not implemented in v4 — deferred to post-hackathon v5_ |
 
 Index: [`docs/diagrams/README.md`](docs/diagrams/README.md).
 
@@ -278,95 +278,45 @@ Every log line MUST include `ts`, `level`, `incident_id`, `stage`, `event`, `dur
 
 ### 4.11 Governance Thresholds Contract
 
-> Binding contract between `IGovernanceProvider` (producer) and `router.py` / Integration agent (consumers).
-> Source of truth: table `governance_thresholds` in `app-db` PostgreSQL. The UI at `governance.html` is the operator interface.
+> **v4 actual implementation:** Governance thresholds are stored as `section="governance"` rows in the `platform_config` table, accessed exclusively via `IPlatformConfigProvider.get_config("governance")`. There is no separate `governance_thresholds` table and no `IGovernanceProvider` port in the implemented codebase.
+>
+> The spec for `IGovernanceProvider` and a dedicated table was planned in v3 but superseded by the unified `IPlatformConfigProvider` approach in v4 for simplicity. The contracts below reflect the actual v4 implementation.
 
-**Table schema — `governance_thresholds`:**
-```sql
-CREATE TABLE governance_thresholds (
-  key         TEXT PRIMARY KEY,
-  value_text  TEXT NOT NULL,         -- canonical serialization; adapter casts to Python type
-  value_type  TEXT NOT NULL,         -- 'float' | 'bool' | 'int' | 'str'
-  description TEXT,
-  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_by  TEXT                   -- operator email or 'system'
-);
-```
+**Governance thresholds — stored as `section="governance"` in `platform_config` table:**
 
-**`GovernanceThresholds` model (owned by `app/domain/entities/governance.py`):**
-```python
-class GovernanceThresholds(BaseModel):
-    confidence_escalation_min: float = 0.60
-    # Below this → human review required (should_escalate returns True)
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `confidence_escalation_min` | float | 0.7 | Below this → escalation triggered |
+| `quality_score_min_for_autoticket` | float | 0.6 | Below this → ticket flagged for human review |
+| `severity_autoticket_threshold` | str | `HIGH` | Severities at or above auto-ticket |
+| `kill_switch_enabled` | bool | false | When true → ALL incidents escalated |
+| `max_rag_docs_to_expose` | int | 5 | Max RAG docs included in responses |
 
-    quality_score_min_for_autoticket: float = 0.65
-    # Below this → ticket flagged with needs_review=True
+**`should_escalate()` — `app/orchestration/orchestrator/router.py`:**
 
-    severity_autoticket_threshold: str = "LOW"
-    # Severities at or above this always auto-ticket (e.g. "LOW" = all; "MEDIUM" = skip LOW)
-
-    kill_switch_enabled: bool = False
-    # When True → ALL incidents are escalated; automated ticket generation paused
-
-    max_rag_docs_to_expose: int = 5
-    # Maximum RAG documents included in ExplainabilityReport.rag_attributions
-```
-
-**Cache policy:**
-- The `PostgresGovernanceAdapter` caches the full `GovernanceThresholds` object in-memory.
-- TTL controlled by `GOVERNANCE_CACHE_TTL_S` env var (default: `60` seconds).
-- A `PUT /governance/thresholds` call invalidates the cache immediately.
-- The `MemoryGovernanceAdapter` holds thresholds in a dict; TTL is irrelevant (always fresh).
-
-**`IGovernanceProvider` port contract (owned by `app/domain/ports/governance_provider.py`):**
-```python
-class IGovernanceProvider(ABC):
-    name: str  # "postgres" | "memory"
-
-    async def get_thresholds(self) -> GovernanceThresholds: ...
-    # Returns cached or freshly loaded thresholds. Never raises — returns defaults on DB error.
-
-    async def update_threshold(self, key: str, value: str) -> GovernanceThresholds: ...
-    # Updates one field in DB, invalidates cache, returns the updated GovernanceThresholds.
-    # Raises ValueError if key is not a valid GovernanceThresholds field name.
-    # Raises TypeError if value cannot be cast to the field's type.
-```
-
-**`should_escalate()` redesign — `app/orchestration/orchestrator/router.py`:**
-
-The current stub (`return False`) MUST be replaced. New signature and policy:
+Pure function, no I/O. Reads governance dict from `CaseState["governance"]`, which is pre-loaded by the API layer before graph invocation (ARC-014 — router purity):
 
 ```python
-def should_escalate(state: CaseState, thresholds: GovernanceThresholds) -> tuple[bool, str | None]:
-    """Returns (should_escalate: bool, reason: str | None).
-    reason is one of: 'low_confidence' | 'kill_switch' | 'severity_threshold' | None.
-    Pure function — no I/O. GovernanceThresholds injected by the orchestrator.
-    """
-    triage = state.get("triage_result")
-    if thresholds.kill_switch_enabled:
-        return True, "kill_switch"
-    if triage and triage.confidence < thresholds.confidence_escalation_min:
-        return True, "low_confidence"
-    if triage and _severity_at_or_above(triage.severity, thresholds.severity_autoticket_threshold):
-        return False, None  # high severity = auto-ticket, NOT escalation
-    return False, None
+def should_escalate(state: CaseState) -> EscalationDecision:
+    governance = state.get("governance", {})
+    triage = state.get("triage")
+    # Reads kill_switch_enabled, confidence_escalation_min, severity_autoticket_threshold from governance dict
 ```
-
-> `@developer` implements this function. `@architect` owns the policy table above.
-> The orchestrator must call `IGovernanceProvider.get_thresholds()` once per incident (at graph entry) and pass the result as a parameter to routing functions.
 
 **API endpoints (owned by `app/api/routes_governance.py`):**
 
-| Method | Path | Auth | Description |
+| Method | Path | Required role | Description |
 |---|---|---|---|
-| `GET` | `/governance/thresholds` | API key | Returns current `GovernanceThresholds` as JSON |
-| `PUT` | `/governance/thresholds` | API key | Updates one or more fields; body: `{"key": "...", "value": "..."}` (single) or `{"updates": [{...}]}` (batch); invalidates cache |
-
-**UI:** `app/ui/templates/governance.html` — HTMX page. Operators view all thresholds and submit inline edits. Each field shows its current value, type, description, and last-updated timestamp. Kill switch has a confirmation modal.
+| `GET` | `/governance/thresholds` | `flow_configurator`, `admin`, `superadmin` | Returns current governance thresholds as JSON |
+| `PUT` | `/governance/thresholds` | `admin`, `superadmin` | Updates one or more thresholds; only non-null fields are written |
 
 ### 4.12 Explainability Contract
 
-> Binding contract between `IExplainabilityProvider` (producer) and the Triage agent + API routes (consumers).
+> **NOT IMPLEMENTED IN v4 — deferred to post-hackathon v5.**
+> `IExplainabilityProvider`, `RagAttribution`, `OutputGrounding`, `ExplainabilityReport`, `FeedbackRecord` entities, and `rag_attribution`/`explainability_report` fields on `TriageResult` are future requirements. The contracts below document the intended design for v5.
+> `TriageResult.rag_attribution` and `IExplainabilityProvider` are planned additions — they do not exist in the v4 codebase.
+
+> Original binding contract between `IExplainabilityProvider` (producer) and the Triage agent + API routes (consumers).
 > Source of truth: Langfuse traces and `ExplainabilityReport` embedded in `TriageResult`.
 
 **New entities (owned by `app/domain/entities/explainability.py`):**
@@ -454,8 +404,12 @@ class IExplainabilityProvider(ABC):
 
 ### 4.13 Online Eval Contract (Langfuse Runtime Scoring)
 
+> **NOT IMPLEMENTED IN v4 — deferred to post-hackathon v5.**
+> `LangfuseExplainabilityAdapter.post_online_eval()` does not exist in the v4 codebase.
+> ARC-019 compliance is a v5 requirement. The contracts below document the intended design.
+
 > This contract governs what MUST be posted to Langfuse after each production incident.
-> Governed by ARC-019. Implemented by `LangfuseExplainabilityAdapter.post_online_eval()`.
+> Governed by ARC-019. Intended to be implemented by `LangfuseExplainabilityAdapter.post_online_eval()`.
 
 **Langfuse Dataset Run structure (one run per incident):**
 
@@ -591,7 +545,7 @@ Five roles, ordered by privilege level (highest to lowest):
 | `GET` | `/incidents/{id}/status` | Any authenticated | Polling endpoint for React dashboard |
 | `POST` | `/feedback/{incident_id}` | `operator` or above | — |
 | `GET` | `/governance/thresholds` | `flow_configurator` or above | — |
-| `PUT` | `/governance/thresholds` | `flow_configurator` or above | — |
+| `PUT` | `/governance/thresholds` | `admin` or above | Write restricted — flow_configurator may read only |
 | `GET` | `/config/llm` | `admin` or above | — |
 | `PUT` | `/config/llm` | `admin` or above | Triggers hot reload |
 | `GET` | `/config/ticket-system` | `admin` or above | — |
@@ -712,13 +666,13 @@ These are enforced by `@architect` review. Any violation fails the gate.
 16. **(ARC-015) Prompt registry is mandatory.** Every LLM prompt MUST be resolved through `app/llm/prompt_registry.py::PROMPT_REGISTRY`. Inline prompt strings inside `app/orchestration/agents/**` are **forbidden**. Each registry entry carries a versioned id (`<purpose>-v<major>.<minor>.<patch>`) which is emitted as `llm.prompt_name` / `llm.prompt_version` on every LLM span (see §4.2). Reviewer rejects on sight any agent file containing a multiline string passed to `ILLMProvider`.
 17. **(ARC-016) Evals are a CI hard gate.** The eval runner (see §4.5) MUST execute on every pull request via GitHub Actions. A PR MUST be blocked from merge if `avg_overall_score < 0.70` OR if any adversarial case is not blocked (`adversarial_recall < 1.0`). The CI job `eval` is non-skippable. Threshold changes require `@architect` approval and a corresponding update to this section.
 
-18. **(ARC-017) Governance thresholds are runtime config, not code.** Business governance thresholds (`confidence_escalation_min`, `quality_score_min_for_autoticket`, `severity_autoticket_threshold`, `kill_switch_enabled`, `max_rag_docs_to_expose`) MUST be stored in the `governance_thresholds` PostgreSQL table and accessed exclusively via `IGovernanceProvider`. Hardcoding any of these values as Python literals in nodes, agents, routers, or services is **forbidden**. The only acceptable hardcoded threshold is the CI eval gate (`avg_overall_score >= 0.70`), which is an architectural decision owned by `@architect` and documented in §4.5. Reviewer rejects on sight any routing or policy function that reads a governance threshold directly from `Settings` or as a Python literal.
+18. **(ARC-017) Governance thresholds are runtime config, not code.** Business governance thresholds (`confidence_escalation_min`, `quality_score_min_for_autoticket`, `severity_autoticket_threshold`, `kill_switch_enabled`, `max_rag_docs_to_expose`) MUST be stored in the `platform_config` table under `section="governance"` and accessed exclusively via `IPlatformConfigProvider.get_config("governance")`. The API layer pre-loads governance into `CaseState["governance"]` before graph invocation to keep `should_escalate()` a pure function (ARC-014). Hardcoding any threshold as a Python literal in nodes, agents, routers, or services is **forbidden**. The only acceptable hardcoded threshold is the CI eval gate (`avg_overall_score >= 0.70`), documented in §4.5.
 
-19. **(ARC-018) Every triage result MUST carry explainability data.** `TriageResult` objects returned from `ILLMProvider.triage()` MUST include `rag_attribution` populated from the RAG results passed to the Triage agent. The `IExplainabilityProvider.compute_report()` call MUST complete before the orchestrator emits its root span. An empty `rag_attribution` list is only acceptable when `TriageResult.degraded == True`. Reviewer rejects on sight any `TriageResult` construction in production code with `rag_attribution=[]` unless `degraded=True` is also set.
+19. **(ARC-018) Explainability data — deferred to v5.** `IExplainabilityProvider`, `RagAttribution`, `OutputGrounding`, and `ExplainabilityReport` are not implemented in v4. `TriageResult.rag_attribution` does not exist in the v4 entity. When v5 is implemented, every triage result MUST carry explainability data and an empty `rag_attribution` list is only acceptable when `TriageResult.degraded == True`.
 
-20. **(ARC-019) Online eval is mandatory in production.** When `app_env == "production"`, the `IExplainabilityProvider.post_online_eval()` MUST be invoked as a background task after the orchestrator root span closes (see §4.13). Failure to post MUST be logged as an error and counted via `sre_online_eval_post_failures_total` Prometheus counter — it MUST NOT raise an exception that breaks the incident response pipeline. In `development` mode this is best-effort: log on failure, do not raise. The `memory_adapter` always silently drops `post_online_eval()` calls (test isolation). Reviewer rejects on sight any removal of the background task invocation in the orchestrator's terminal node.
+20. **(ARC-019) Online eval — deferred to v5.** `IExplainabilityProvider.post_online_eval()` is not implemented in v4. The `sre_online_eval_post_failures_total` Prometheus counter is defined as a placeholder. When v5 is implemented, `post_online_eval()` MUST fire as a background task in production, with errors logged and counted via that counter.
 
-21. **(ARC-020) No business configuration value may be hardcoded after HU-P032.** After the Config-from-DB platform is deployed, no business configuration value (LLM provider, API keys, ticket system, notify provider, file type allowlists, circuit breaker thresholds, observability settings, security settings) may be hardcoded as a Python literal in source code or as a value in `.env` files. All such values MUST live in one of the three config tables (`governance_thresholds`, `llm_config`, `platform_config`) and be accessed exclusively via the corresponding port (`IGovernanceProvider`, `ILLMConfigProvider`, `IPlatformConfigProvider`). The ONLY permitted `.env` values are the seven bootstrap variables listed in §4.14.1. Reviewer rejects on sight any new `settings.some_business_variable` reference introduced after HU-P032 is merged. Config providers MUST return safe in-memory defaults when the DB is unreachable — they MUST NOT raise.
+21. **(ARC-020) No business configuration value may be hardcoded after HU-P032.** After the Config-from-DB platform is deployed, no business configuration value (LLM provider, API keys, ticket system, notify provider, file type allowlists, circuit breaker thresholds, observability settings, security settings) may be hardcoded as a Python literal in source code or as a value in `.env` files. All such values MUST live in one of the two active config tables (`llm_config`, `platform_config`) — governance thresholds are a section of `platform_config` — and be accessed via the corresponding port (`ILLMConfigProvider`, `IPlatformConfigProvider`). The ONLY permitted `.env` values are the seven bootstrap variables listed in §4.14.1. Config providers MUST return safe in-memory defaults when the DB is unreachable — they MUST NOT raise.
 
 22. **(ARC-021) React UI text is English-only. SoftServe Design Tokens are the single styling source of truth.** All user-visible strings in the React SPA (labels, placeholders, validation messages, button text, toast messages, section headers, error messages) MUST be in English. No i18n library (react-i18next, lingui, FormatJS) may be installed or used. No locale files (`.json` translations) may be created. All visual styling MUST use the SoftServe Design System tokens documented in §10 — no hardcoded color hex values, no arbitrary Tailwind classes that override the design token palette. Reviewer rejects on sight any Spanish text in React component output or any `text-[#hex]` Tailwind class that bypasses the token system.
 
@@ -756,21 +710,21 @@ HACKATHON/
 services/sre-agent/app/
 ├── domain/                    ← PURE CORE (zero external imports)
 │   ├── entities/              ← Incident, Ticket, Notification, TriageResult, Severity
-│   │   ├── triage.py                 TriageResult (+rag_attribution, +explainability_report)
-│   │   ├── governance.py             GovernanceThresholds
-│   │   ├── explainability.py         RagAttribution, OutputGrounding, ExplainabilityReport, FeedbackRecord
+│   │   ├── triage.py                 TriageResult (+ cost_usd field added v4)
 │   │   ├── llm_config.py             LLMConfig, LLMProviderConfig  ← NEW v4
-│   │   └── platform_config.py        PlatformConfig (ticket, notify, context, security, observability, storage sections)  ← NEW v4
-│   ├── ports/                 ← Interfaces (ABC + Protocol)
+│   │   │   NOTE: governance.py, explainability.py, platform_config.py do NOT exist in v4.
+│   │   │         Governance thresholds are a section of platform_config table (IPlatformConfigProvider).
+│   │   │         Explainability entities are deferred to v5.
+│   ├── ports/                 ← Interfaces (ABC + Protocol) — 7 active ports in v4
 │   │   ├── ticket_provider.py        ITicketProvider
 │   │   ├── notify_provider.py        INotifyProvider
 │   │   ├── llm_provider.py           ILLMProvider
 │   │   ├── storage_provider.py       IStorageProvider
-│   │   ├── context_provider.py       IContextProvider (extended: name now includes 'github')
-│   │   ├── governance_provider.py    IGovernanceProvider (unchanged — thresholds only)
-│   │   ├── explainability_provider.py  IExplainabilityProvider
+│   │   ├── context_provider.py       IContextProvider (name: "static" | "faiss" | "github")
 │   │   ├── llm_config_provider.py    ILLMConfigProvider  ← NEW v4
 │   │   └── platform_config_provider.py  IPlatformConfigProvider  ← NEW v4
+│   │       NOTE: governance_provider.py and explainability_provider.py do NOT exist in v4.
+│   │             Governance is served by IPlatformConfigProvider.get_config("governance").
 │   └── services/              ← Pure use cases (orchestrate via ports only)
 │       └── triage_service.py
 │
@@ -795,12 +749,9 @@ services/sre-agent/app/
 │   │   ├── static_adapter.py         ← curated eShop excerpts (fallback)
 │   │   ├── faiss_adapter.py          ← FAISS in-process semantic search
 │   │   └── github_context_adapter.py ← GithubContextProvider: downloads eShopOnWeb ZIP, indexes via FAISS  ← NEW v4
-│   ├── governance/
-│   │   ├── postgres_adapter.py       ← reads governance_thresholds table; TTL cache
-│   │   └── memory_adapter.py         ← for tests
-│   ├── explainability/
-│   │   ├── langfuse_adapter.py
-│   │   └── memory_adapter.py
+│   │   NOTE: adapters/governance/ and adapters/explainability/ do NOT exist in v4.
+│   │         Governance thresholds are stored under section="governance" in platform_config table.
+│   │         Explainability adapters are deferred to v5.
 │   ├── llm_config/                   ← NEW v4
 │   │   ├── postgres_adapter.py       ← reads/writes llm_config table; encrypts API keys
 │   │   └── memory_adapter.py         ← for tests
@@ -951,6 +902,10 @@ The synchronous incident graph (`build_orchestrator_graph`) returns within bound
 
 ## 7. Ports — The Domain Contract
 
+**v4 active ports: 7** — `ILLMProvider`, `ITicketProvider`, `INotifyProvider`, `IStorageProvider`, `IContextProvider`, `ILLMConfigProvider`, `IPlatformConfigProvider`.
+
+`IGovernanceProvider` and `IExplainabilityProvider` listed in v3 are **not implemented** in v4. Governance thresholds are a section of `IPlatformConfigProvider`. Explainability is deferred to v5.
+
 Each port is an `ABC` (abstract base class) defined in `app/domain/ports/`. The methods below are the *only* surface area the domain knows about.
 
 ### 7.1 `ILLMProvider`
@@ -1043,7 +998,10 @@ class IPlatformConfigProvider(ABC):
     # Used internally by container.py to build adapters.
 ```
 
-### 7.8 `IGovernanceProvider`
+### 7.8 `IGovernanceProvider` _(not implemented in v4 — deferred to v5)_
+
+> Governance thresholds are stored as `section="governance"` in the `platform_config` table and served by `IPlatformConfigProvider` (§7.7). The port below describes the v5 design only.
+
 ```python
 class IGovernanceProvider(ABC):
     name: str  # "postgres" | "memory"
@@ -1061,7 +1019,10 @@ class IGovernanceProvider(ABC):
     # Returns the full GovernanceThresholds after the update.
 ```
 
-### 7.9 `IExplainabilityProvider`
+### 7.9 `IExplainabilityProvider` _(not implemented in v4 — deferred to v5)_
+
+> Explainability and online eval are post-hackathon features. The port below describes the v5 design only.
+
 ```python
 class IExplainabilityProvider(ABC):
     name: str  # "langfuse" | "memory"

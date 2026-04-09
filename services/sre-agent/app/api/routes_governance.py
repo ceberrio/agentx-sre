@@ -4,11 +4,12 @@ Exposes governance thresholds stored in the platform_config table under the
 'governance' section.  This is the API layer consumed by GovernancePage.tsx.
 
 Endpoints:
-  GET  /config/governance  — read current thresholds (admin / superadmin)
-  PUT  /config/governance  — update one or more thresholds (admin / superadmin)
+  GET  /governance/thresholds  — read current thresholds (flow_configurator / admin / superadmin)
+  PUT  /governance/thresholds  — update one or more thresholds (admin / superadmin)
 
 Auth (HU-P018, ARC-022):
-  Both endpoints require Bearer JWT or X-API-Key with ADMIN or SUPERADMIN role.
+  GET: flow_configurator, admin, superadmin.
+  PUT: admin, superadmin only.
 
 Persistence (DEC-A05, ARC-020):
   Default values are seeded by migration 0006.  The adapter is
@@ -36,7 +37,7 @@ from app.infrastructure.container import get_container
 
 log = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/config/governance", tags=["governance"])
+router = APIRouter(prefix="/governance", tags=["governance"])
 
 # Governance section key used in platform_config (must match migration 0006).
 _SECTION = "governance"
@@ -55,7 +56,7 @@ def _success_response() -> dict:
 
 
 class GovernanceResponse(BaseModel):
-    """Governance thresholds returned by GET /config/governance.
+    """Governance thresholds returned by GET /governance/thresholds.
 
     All fields are Optional to handle a fresh install before the seed runs.
     """
@@ -105,9 +106,11 @@ class GovernanceUpdateRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-@router.get("", response_model=GovernanceResponse)
+@router.get("/thresholds", response_model=GovernanceResponse)
 async def get_governance_config(
-    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.SUPERADMIN)),
+    current_user: User = Depends(
+        require_role(UserRole.FLOW_CONFIGURATOR, UserRole.ADMIN, UserRole.SUPERADMIN)
+    ),
 ) -> GovernanceResponse:
     """Return current governance thresholds from the platform_config table."""
     container = get_container()
@@ -167,7 +170,7 @@ async def get_governance_config(
 # ---------------------------------------------------------------------------
 
 
-@router.put("")
+@router.put("/thresholds")
 async def update_governance_config(
     request: Request,
     body: GovernanceUpdateRequest,

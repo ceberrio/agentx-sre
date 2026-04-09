@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field
 from app.api.deps import get_current_user_or_api_key
 from app.domain.entities.user import User
 from app.infrastructure.container import get_container
+from app.observability.metrics import human_feedback_total
 
 log = logging.getLogger(__name__)
 
@@ -68,6 +69,7 @@ async def submit_feedback(
     # annotation. Never log the full comment — may contain PII.
     persisted = True  # Feedback captured via structured log → Langfuse
 
+    human_feedback_total.labels(rating=body.rating).inc()
     log.info(
         "feedback.received",
         extra={

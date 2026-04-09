@@ -35,6 +35,10 @@ _CLASSIFY_MAX_TOKENS = 256
 _GENERATE_MAX_TOKENS = 1024
 _CLASSIFY_INPUT_CHAR_LIMIT = 4000
 
+# Approximate Claude Haiku 4.5-20251001 pricing (per 1M tokens, USD)
+_COST_PER_INPUT_TOKEN = 0.25 / 1_000_000
+_COST_PER_OUTPUT_TOKEN = 1.25 / 1_000_000
+
 
 def _strip_markdown_fence(text: str) -> str:
     """Remove markdown code fences that some LLMs inject around JSON responses.
@@ -108,6 +112,8 @@ class AnthropicLLMAdapter(ILLMProvider):
             severity_raw = data.get("severity", "P3")
             severity = severity_map.get(severity_raw, Severity.P3)
 
+            cost_usd = tokens_in * _COST_PER_INPUT_TOKEN + tokens_out * _COST_PER_OUTPUT_TOKEN
+
             return TriageResult(
                 severity=severity,
                 summary=data.get("summary", ""),
@@ -120,6 +126,7 @@ class AnthropicLLMAdapter(ILLMProvider):
                 model=self._model,
                 used_fallback=False,
                 degraded=False,
+                cost_usd=cost_usd,
             )
         except Exception as exc:
             log.error(

@@ -33,6 +33,7 @@ try:
 except ImportError:
     from typing import Any as CompiledGraph  # type: ignore[assignment]
 from app.observability import tracing
+from app.observability.metrics import escalations_by_reason_total, incidents_escalated_total
 from app.orchestration.agents.integration.agent import build_integration_agent
 from app.orchestration.agents.intake_guard.agent import build_intake_guard_agent
 from app.orchestration.agents.resolution.agent import build_resolution_agent
@@ -194,6 +195,8 @@ async def _run_triage(state: CaseState, subgraph) -> CaseState:
         if escalation.escalate:
             state["status"] = CaseStatus.ESCALATED
             state["blocked_reason"] = f"escalated_by_governance:{escalation.trigger}"
+            incidents_escalated_total.labels(agent_name="triage").inc()
+            escalations_by_reason_total.labels(reason=escalation.trigger or "unknown").inc()
             log.info(
                 "orchestrator.escalation_triggered",
                 extra={

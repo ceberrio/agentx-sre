@@ -1,16 +1,16 @@
 """Tests for Governance Configuration endpoints — HU-12 / DEC-A05.
 
-AC-01: GET /config/governance returns 200 with default seeded values deserialized correctly.
-AC-02: PUT /config/governance updates stored values — subsequent GET reflects the change.
-AC-03: GET /config/governance returns kill_switch_enabled as a Python bool (not a string).
-AC-04: PUT /config/governance with kill_switch_enabled=True stores 'true' string, GET returns True.
-AC-05: PUT /config/governance with no fields returns 200 (no-op).
-AC-06: PUT /config/governance with confidence_escalation_min > 1.0 returns 422.
-AC-07: PUT /config/governance with max_rag_docs_to_expose = 0 returns 422.
+AC-01: GET /governance/thresholds returns 200 with default seeded values deserialized correctly.
+AC-02: PUT /governance/thresholds updates stored values — subsequent GET reflects the change.
+AC-03: GET /governance/thresholds returns kill_switch_enabled as a Python bool (not a string).
+AC-04: PUT /governance/thresholds with kill_switch_enabled=True stores 'true' string, GET returns True.
+AC-05: PUT /governance/thresholds with no fields returns 200 (no-op).
+AC-06: PUT /governance/thresholds with confidence_escalation_min > 1.0 returns 422.
+AC-07: PUT /governance/thresholds with max_rag_docs_to_expose = 0 returns 422.
 BR-01: Anonymous request (no auth) returns 401.
 BR-02: OPERATOR role is rejected with 403 on both GET and PUT.
-BR-03: VIEWER role is rejected with 403 on both GET and PUT.
-BR-04: PUT /config/governance with severity outside the allowed enum returns 422.
+BR-03: VIEWER role is rejected with 403 on both GET and PUT (GET now allows flow_configurator too).
+BR-04: PUT /governance/thresholds with severity outside the allowed enum returns 422.
 BR-05: DB failure on GET returns 503.
 BR-06: DB failure on PUT returns 503.
 """
@@ -99,7 +99,7 @@ def test_get_governance_returns_200_with_float_and_int_defaults():
          patch("app.api.deps.get_container", return_value=container):
         app, token = _make_app(container)
         client = TestClient(app, raise_server_exceptions=True)
-        resp = client.get("/config/governance", headers=_bearer(token))
+        resp = client.get("/governance/thresholds", headers=_bearer(token))
 
     assert resp.status_code == 200
     body = resp.json()
@@ -118,7 +118,7 @@ def test_get_governance_empty_section_returns_none_fields():
          patch("app.api.deps.get_container", return_value=container):
         app, token = _make_app(container)
         client = TestClient(app, raise_server_exceptions=True)
-        resp = client.get("/config/governance", headers=_bearer(token))
+        resp = client.get("/governance/thresholds", headers=_bearer(token))
 
     assert resp.status_code == 200
     body = resp.json()
@@ -142,14 +142,14 @@ def test_put_then_get_confidence_min_updated():
         client = TestClient(app, raise_server_exceptions=True)
 
         put_resp = client.put(
-            "/config/governance",
+            "/governance/thresholds",
             headers=_bearer(token),
             json={"confidence_escalation_min": 0.85},
         )
         assert put_resp.status_code == 200
         assert put_resp.json()["success"] is True
 
-        get_resp = client.get("/config/governance", headers=_bearer(token))
+        get_resp = client.get("/governance/thresholds", headers=_bearer(token))
 
     assert get_resp.status_code == 200
     assert get_resp.json()["confidence_escalation_min"] == pytest.approx(0.85)
@@ -169,7 +169,7 @@ def test_kill_switch_false_returned_as_bool():
          patch("app.api.deps.get_container", return_value=container):
         app, token = _make_app(container)
         client = TestClient(app, raise_server_exceptions=True)
-        resp = client.get("/config/governance", headers=_bearer(token))
+        resp = client.get("/governance/thresholds", headers=_bearer(token))
 
     assert resp.status_code == 200
     assert resp.json()["kill_switch_enabled"] is False
@@ -189,8 +189,8 @@ def test_put_kill_switch_true_stored_and_returned_as_bool():
          patch("app.api.deps.get_container", return_value=container):
         app, token = _make_app(container)
         client = TestClient(app, raise_server_exceptions=True)
-        client.put("/config/governance", headers=_bearer(token), json={"kill_switch_enabled": True})
-        resp = client.get("/config/governance", headers=_bearer(token))
+        client.put("/governance/thresholds", headers=_bearer(token), json={"kill_switch_enabled": True})
+        resp = client.get("/governance/thresholds", headers=_bearer(token))
 
     assert resp.status_code == 200
     assert resp.json()["kill_switch_enabled"] is True
@@ -211,7 +211,7 @@ def test_put_empty_body_returns_success_noop():
          patch("app.api.deps.get_container", return_value=container):
         app, token = _make_app(container)
         client = TestClient(app, raise_server_exceptions=True)
-        resp = client.put("/config/governance", headers=_bearer(token), json={})
+        resp = client.put("/governance/thresholds", headers=_bearer(token), json={})
 
     assert resp.status_code == 200
     assert resp.json()["success"] is True
@@ -234,7 +234,7 @@ def test_put_confidence_above_1_returns_422():
         app, token = _make_app(container)
         client = TestClient(app, raise_server_exceptions=True)
         resp = client.put(
-            "/config/governance",
+            "/governance/thresholds",
             headers=_bearer(token),
             json={"confidence_escalation_min": 1.5},
         )
@@ -252,7 +252,7 @@ def test_put_confidence_below_0_returns_422():
         app, token = _make_app(container)
         client = TestClient(app, raise_server_exceptions=True)
         resp = client.put(
-            "/config/governance",
+            "/governance/thresholds",
             headers=_bearer(token),
             json={"confidence_escalation_min": -0.1},
         )
@@ -275,7 +275,7 @@ def test_put_rag_docs_zero_returns_422():
         app, token = _make_app(container)
         client = TestClient(app, raise_server_exceptions=True)
         resp = client.put(
-            "/config/governance",
+            "/governance/thresholds",
             headers=_bearer(token),
             json={"max_rag_docs_to_expose": 0},
         )
@@ -293,7 +293,7 @@ def test_put_rag_docs_above_max_returns_422():
         app, token = _make_app(container)
         client = TestClient(app, raise_server_exceptions=True)
         resp = client.put(
-            "/config/governance",
+            "/governance/thresholds",
             headers=_bearer(token),
             json={"max_rag_docs_to_expose": 21},
         )
@@ -315,7 +315,7 @@ def test_get_without_auth_returns_401():
          patch("app.api.deps.get_container", return_value=container):
         app, _ = _make_app(container)
         client = TestClient(app, raise_server_exceptions=True)
-        resp = client.get("/config/governance")
+        resp = client.get("/governance/thresholds")
 
     assert resp.status_code == 401
 
@@ -329,7 +329,7 @@ def test_put_without_auth_returns_401():
          patch("app.api.deps.get_container", return_value=container):
         app, _ = _make_app(container)
         client = TestClient(app, raise_server_exceptions=True)
-        resp = client.put("/config/governance", json={"kill_switch_enabled": False})
+        resp = client.put("/governance/thresholds", json={"kill_switch_enabled": False})
 
     assert resp.status_code == 401
 
@@ -348,7 +348,7 @@ def test_get_as_operator_returns_403():
          patch("app.api.deps.get_container", return_value=container):
         app, token = _make_app(container)
         client = TestClient(app, raise_server_exceptions=True)
-        resp = client.get("/config/governance", headers=_bearer(token))
+        resp = client.get("/governance/thresholds", headers=_bearer(token))
 
     assert resp.status_code == 403
 
@@ -363,7 +363,7 @@ def test_put_as_operator_returns_403():
         app, token = _make_app(container)
         client = TestClient(app, raise_server_exceptions=True)
         resp = client.put(
-            "/config/governance", headers=_bearer(token), json={"kill_switch_enabled": True}
+            "/governance/thresholds", headers=_bearer(token), json={"kill_switch_enabled": True}
         )
 
     assert resp.status_code == 403
@@ -383,7 +383,7 @@ def test_get_as_viewer_returns_403():
          patch("app.api.deps.get_container", return_value=container):
         app, token = _make_app(container)
         client = TestClient(app, raise_server_exceptions=True)
-        resp = client.get("/config/governance", headers=_bearer(token))
+        resp = client.get("/governance/thresholds", headers=_bearer(token))
 
     assert resp.status_code == 403
 
@@ -403,7 +403,7 @@ def test_put_invalid_severity_returns_422():
         app, token = _make_app(container)
         client = TestClient(app, raise_server_exceptions=True)
         resp = client.put(
-            "/config/governance",
+            "/governance/thresholds",
             headers=_bearer(token),
             json={"severity_autoticket_threshold": "UNKNOWN"},
         )
@@ -439,7 +439,7 @@ def test_get_db_failure_returns_503():
     with patch("app.api.routes_governance.get_container", return_value=container), \
          patch("app.api.deps.get_container", return_value=container):
         client = TestClient(app, raise_server_exceptions=False)
-        resp = client.get("/config/governance", headers=_bearer(token))
+        resp = client.get("/governance/thresholds", headers=_bearer(token))
 
     assert resp.status_code == 503
 
@@ -473,7 +473,7 @@ def test_put_db_failure_returns_503():
          patch("app.api.deps.get_container", return_value=container):
         client = TestClient(app, raise_server_exceptions=False)
         resp = client.put(
-            "/config/governance",
+            "/governance/thresholds",
             headers=_bearer(token),
             json={"kill_switch_enabled": True},
         )

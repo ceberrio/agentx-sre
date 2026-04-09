@@ -54,6 +54,14 @@ export interface Incident {
   has_log: boolean
   created_at: string
   updated_at: string
+  triage_summary?: string | null
+  triage_root_cause?: string | null
+  triage_confidence?: number | null
+  triage_needs_human_review?: boolean | null
+  triage_suggested_owners?: string | string[] | null
+  triage_used_fallback?: boolean | null
+  triage_degraded?: boolean | null
+  ticket_id?: string | null
 }
 
 export interface GovernanceThresholds {

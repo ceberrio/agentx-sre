@@ -17,12 +17,9 @@ import logging
 
 from langgraph.graph import END, StateGraph
 
-from app.adapters.llm.gemini_adapter import (
-    GEMINI_FLASH_COST_IN_USD_PER_TOKEN,
-    GEMINI_FLASH_COST_OUT_USD_PER_TOKEN,
-)
 from app.domain.entities import ContextDoc, TriagePrompt
 from app.infrastructure.container import Container
+from app.llm.prompt_registry import PROMPT_REGISTRY
 from app.observability import tracing
 from app.observability.metrics import (
     agent_iterations_bucket,
@@ -82,10 +79,11 @@ class TriageAgent(BaseAgent):
                 extra={"incident_id": incident.id, "error": str(exc)},
             )
 
-        # Update RAG hit rate gauge
+        # Update RAG hit rate gauge — use dynamic provider name (F-014)
         if rag_queries > 0:
             hit_rate = len(rag_docs) / (5 * rag_queries)
-            rag_hit_rate.labels(context_provider="faiss").set(hit_rate)
+            _ctx_provider_name = getattr(self.container.context, "name", "unknown")
+            rag_hit_rate.labels(context_provider=_ctx_provider_name).set(hit_rate)
 
         state["retrieved_context"] = rag_docs
         state["tool_calls"] = rag_queries
@@ -122,10 +120,17 @@ class TriageAgent(BaseAgent):
             result = await self.container.llm.triage(triage_prompt)
             state["triage_result"] = result
 
-            # Emit metrics
-            cost = result.tokens_in * GEMINI_FLASH_COST_IN_USD_PER_TOKEN + result.tokens_out * GEMINI_FLASH_COST_OUT_USD_PER_TOKEN
-            provider = result.model if not result.used_fallback else "openrouter"
-            llm_calls_total.labels(provider=provider, prompt_name="triage-analysis-v1.0.0").inc()
+            # Emit metrics — use cost_usd populated by the adapter (ARC-002).
+            # result.model is set by each adapter to the actual model identifier,
+            # so provider identity is always derivable from it regardless of fallback.
+            cost = result.cost_usd
+            provider = result.model
+            try:
+                _prompt_tmpl = PROMPT_REGISTRY.get("triage-analysis", "1.0.0")
+                _prompt_metric_id = _prompt_tmpl.prompt_id
+            except KeyError:
+                _prompt_metric_id = "triage-analysis-v1.0.0"
+            llm_calls_total.labels(provider=provider, prompt_name=_prompt_metric_id).inc()
             llm_cost_usd_total.labels(provider=provider).inc(cost)
             triage_quality_score_bucket.observe(result.confidence)
             incidents_by_severity_total.labels(severity=result.severity.value).inc()
@@ -166,14 +171,23 @@ class TriageAgent(BaseAgent):
         rag_hits = len(raw_docs)
         iterations = rag_queries + 1  # RAG + LLM call
 
-        # Emit Langfuse observability span
+        # Resolve prompt name/version from registry (F-017, ARC-015)
+        try:
+            _tmpl = PROMPT_REGISTRY.get("triage-analysis", "1.0.0")
+            _prompt_name = _tmpl.name
+            _prompt_version = _tmpl.version
+        except KeyError:
+            _prompt_name = "triage-analysis"
+            _prompt_version = "1.0.0"
+
+        # Emit Langfuse observability span (use cost_usd from adapter, ARC-002)
         with tracing.span_triage(
             incident_id=incident.id,
             context_docs=[d.get("source", "") for d in raw_docs],
             severity=triage_result.severity.value,
-            llm_cost_usd=triage_result.tokens_in * GEMINI_FLASH_COST_IN_USD_PER_TOKEN + triage_result.tokens_out * GEMINI_FLASH_COST_OUT_USD_PER_TOKEN,
-            llm_prompt_name="triage-analysis",
-            llm_prompt_version="1.0.0",
+            llm_cost_usd=triage_result.cost_usd,
+            llm_prompt_name=_prompt_name,
+            llm_prompt_version=_prompt_version,
             llm_tokens_in=triage_result.tokens_in,
             llm_tokens_out=triage_result.tokens_out,
             llm_provider_used=triage_result.model,

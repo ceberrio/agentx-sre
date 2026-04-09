@@ -24,10 +24,6 @@ log = logging.getLogger(__name__)
 _COST_PER_INPUT_TOKEN = 0.075 / 1_000_000
 _COST_PER_OUTPUT_TOKEN = 0.30 / 1_000_000
 
-# Public constants — importable by other modules that need cost calculations
-GEMINI_FLASH_COST_IN_USD_PER_TOKEN = 0.075 / 1_000_000
-GEMINI_FLASH_COST_OUT_USD_PER_TOKEN = 0.30 / 1_000_000
-
 
 class GeminiLLMAdapter(ILLMProvider):
     name = "gemini"
@@ -85,6 +81,10 @@ class GeminiLLMAdapter(ILLMProvider):
             severity_raw = data.get("severity", "P3")
             severity = severity_map.get(severity_raw, Severity.P3)
 
+            cost_usd = (
+                tokens_in * _COST_PER_INPUT_TOKEN
+                + tokens_out * _COST_PER_OUTPUT_TOKEN
+            )
             return TriageResult(
                 severity=severity,
                 summary=data.get("summary", ""),
@@ -97,6 +97,7 @@ class GeminiLLMAdapter(ILLMProvider):
                 model=self._model_name,
                 used_fallback=False,
                 degraded=False,
+                cost_usd=cost_usd,
             )
         except Exception as exc:
             log.error(

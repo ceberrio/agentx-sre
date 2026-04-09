@@ -69,3 +69,32 @@ class TestMetricLabels:
 
     def test_rag_hit_rate_label(self):
         metrics.rag_hit_rate.labels(context_provider="faiss").set(0.8)
+
+    def test_escalations_by_reason_label(self):
+        metrics.escalations_by_reason_total.labels(reason="low_confidence").inc(0)
+
+    def test_human_feedback_label(self):
+        for rating in ("positive", "negative"):
+            metrics.human_feedback_total.labels(rating=rating).inc(0)
+
+    def test_llm_fallback_activations_label(self):
+        metrics.llm_fallback_activations_total.labels(from_provider="gemini", to_provider="openrouter").inc(0)
+
+
+class TestAdditionalMetricsExist:
+    """AC-03: Additional contract metrics are defined and have correct types."""
+
+    def test_escalations_by_reason_total_is_counter(self):
+        assert isinstance(metrics.escalations_by_reason_total, Counter)
+
+    def test_human_feedback_total_is_counter(self):
+        assert isinstance(metrics.human_feedback_total, Counter)
+
+    def test_governance_cache_hits_total_is_counter(self):
+        assert isinstance(metrics.governance_cache_hits_total, Counter)
+
+    def test_grounding_score_bucket_is_histogram(self):
+        assert isinstance(metrics.grounding_score_bucket, Histogram)
+
+    def test_online_eval_post_failures_total_is_counter(self):
+        assert isinstance(metrics.online_eval_post_failures_total, Counter)

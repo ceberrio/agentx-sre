@@ -72,6 +72,8 @@ class OpenRouterLLMAdapter(ILLMProvider):
                 model=self._model,
                 used_fallback=True,
                 degraded=False,
+                # OpenRouter free-tier: cost is 0 (provider populates cost_usd per ARC-002)
+                cost_usd=0.0,
             )
         except Exception as exc:
             log.error(

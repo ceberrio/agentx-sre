@@ -35,6 +35,9 @@ class TriageResult(BaseModel):
     model: str = ""
     used_fallback: bool = False
     degraded: bool = False
+    # Provider-agnostic cost populated by the LLM adapter (ARC-002).
+    # Avoids agent code importing adapter-specific pricing constants.
+    cost_usd: float = 0.0
 
 
 class InjectionVerdict(BaseModel):
