@@ -39,6 +39,7 @@ export type IncidentStatus =
   | 'resolved'
   | 'blocked'
   | 'failed'
+  | 'dismissed'
 
 /** Incident entity matching the backend Incident.model_dump() fields. */
 export interface Incident {

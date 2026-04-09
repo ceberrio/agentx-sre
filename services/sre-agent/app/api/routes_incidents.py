@@ -280,6 +280,29 @@ async def resolve_incident(
     if current_user.role == UserRole.OPERATOR and incident.reporter_email != current_user.email:
         raise HTTPException(status_code=404, detail="incident_not_found")
 
+    if incident.blocked:
+        if current_user.role not in (UserRole.ADMIN, UserRole.SUPERADMIN):
+            raise HTTPException(
+                status_code=403,
+                detail="admin_required_to_dismiss_blocked_incident",
+            )
+        try:
+            await container.storage.update_incident(
+                str(incident_id),
+                {
+                    "status": "dismissed",
+                    "resolved_at": datetime.now(timezone.utc),
+                },
+            )
+        except ValueError:
+            raise
+        except Exception as persist_err:
+            log.warning(
+                "api.dismiss_persist_failed",
+                extra={"incident_id": str(incident_id), "error": str(persist_err)},
+            )
+        return {"incident_id": incident_id, "status": "dismissed"}
+
     if not incident.ticket_id:
         raise HTTPException(status_code=409, detail="incident_not_yet_ticketed")
     ticket = await container.ticket.resolve_ticket(incident.ticket_id)

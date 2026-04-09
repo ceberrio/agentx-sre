@@ -5,7 +5,7 @@
  * AC-07: RoleBadge with role-specific colors.
  */
 import { clsx } from 'clsx'
-import type { Severity, BackendSeverity, IncidentStatus, UserRole } from '../../api/types'
+import type { Severity, BackendSeverity, UserRole } from '../../api/types'
 import { SEVERITY_MAP } from '../../api/types'
 
 // --- Severity Badge ---
@@ -45,7 +45,18 @@ export function SeverityBadge({ severity, className }: SeverityBadgeProps) {
 
 // --- Status Badge (AC-09) ---
 
-type DisplayStatus = 'open' | 'closed' | 'processing' | 'error' | IncidentStatus
+type DisplayStatus =
+  | 'open'
+  | 'closed'
+  | 'processing'
+  | 'error'
+  | 'received'
+  | 'triaging'
+  | 'ticketed'
+  | 'resolved'
+  | 'blocked'
+  | 'failed'
+  | 'dismissed'
 
 const statusClasses: Record<DisplayStatus, string> = {
   open: 'bg-semantic-warning-light text-amber-800',
@@ -59,6 +70,7 @@ const statusClasses: Record<DisplayStatus, string> = {
   resolved: 'bg-semantic-success-light text-green-800',
   blocked: 'bg-semantic-warning-light text-amber-800',
   failed: 'bg-semantic-error-light text-red-800',
+  dismissed: 'bg-neutral-100 text-neutral-600',
 }
 
 const statusLabels: Record<DisplayStatus, string> = {
@@ -72,6 +84,7 @@ const statusLabels: Record<DisplayStatus, string> = {
   resolved: 'Resolved',
   blocked: 'Blocked',
   failed: 'Failed',
+  dismissed: 'Dismissed',
 }
 
 interface StatusBadgeProps {

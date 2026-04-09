@@ -22,6 +22,7 @@ class IncidentStatus(str, Enum):
     RESOLVED = "resolved"
     BLOCKED = "blocked"
     FAILED = "failed"
+    DISMISSED = "dismissed"
 
 
 class Incident(BaseModel):

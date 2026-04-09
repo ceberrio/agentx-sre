@@ -133,6 +133,7 @@ export function IncidentDetailPage() {
   }
 
   const isResolved = incident.status === 'resolved'
+  const isDismissed = incident.status === 'dismissed'
   const isBlocked = incident.blocked
   const suggestedOwners = parseSuggestedOwners(incident.triage_suggested_owners)
 
@@ -188,7 +189,7 @@ export function IncidentDetailPage() {
       )}
 
       {/* Resolution success feedback */}
-      {resolveSuccess && !isResolved && (
+      {resolveSuccess && !isResolved && !isDismissed && (
         <div className="mb-4">
           <Alert
             type="success"
@@ -357,7 +358,7 @@ export function IncidentDetailPage() {
       </div>
 
       {/* Actions */}
-      {!isResolved && (
+      {!isResolved && !isDismissed && (
         <div className="mb-4">
           <Card title="Actions">
             <div className="flex items-center gap-4">
@@ -395,34 +396,48 @@ export function IncidentDetailPage() {
         />
       </Card>
 
-      {/* Resolve confirmation modal */}
-      <Modal
-        isOpen={confirmResolveOpen}
-        onClose={() => setConfirmResolveOpen(false)}
-        title="Confirm Resolution"
-        footer={
-          <>
-            <Button variant="ghost" onClick={() => setConfirmResolveOpen(false)}>
-              Cancel
-            </Button>
-            <Button
-              variant="danger"
-              onClick={() => void handleResolve()}
-              loading={resolveIncident.isPending}
-            >
-              Resolve Incident
-            </Button>
-          </>
-        }
-      >
-        <p className="text-sm text-neutral-700 font-montserrat">
-          This will trigger resolution for incident{' '}
-          <span className="font-mono font-semibold">#{id.slice(0, 8)}</span>.
-        </p>
-        <p className="text-sm text-neutral-500 font-montserrat mt-3">
-          Are you sure you want to proceed? This action cannot be undone.
-        </p>
-      </Modal>
+      {/* Resolve / Dismiss confirmation modal */}
+      {(() => {
+        const modalTitle = isBlocked ? 'Confirm Dismissal' : 'Confirm Resolution'
+        const modalButtonLabel = isBlocked ? 'Dismiss Incident' : 'Resolve Incident'
+        return (
+          <Modal
+            isOpen={confirmResolveOpen}
+            onClose={() => setConfirmResolveOpen(false)}
+            title={modalTitle}
+            footer={
+              <>
+                <Button variant="ghost" onClick={() => setConfirmResolveOpen(false)}>
+                  Cancel
+                </Button>
+                <Button
+                  variant="danger"
+                  onClick={() => void handleResolve()}
+                  loading={resolveIncident.isPending}
+                >
+                  {modalButtonLabel}
+                </Button>
+              </>
+            }
+          >
+            {isBlocked ? (
+              <p className="text-sm text-neutral-700 font-montserrat">
+                This will permanently dismiss this blocked incident. No ticket will be created. This action cannot be undone.
+              </p>
+            ) : (
+              <>
+                <p className="text-sm text-neutral-700 font-montserrat">
+                  This will trigger resolution for incident{' '}
+                  <span className="font-mono font-semibold">#{id.slice(0, 8)}</span>.
+                </p>
+                <p className="text-sm text-neutral-500 font-montserrat mt-3">
+                  Are you sure you want to proceed? This action cannot be undone.
+                </p>
+              </>
+            )}
+          </Modal>
+        )
+      })()}
     </Layout>
   )
 }
