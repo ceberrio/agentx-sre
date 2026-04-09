@@ -12,20 +12,10 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     # ----- LLM -----
-    llm_provider: Literal["gemini", "openrouter", "anthropic", "openai", "stub"] = "gemini"
-    llm_fallback_provider: Literal["gemini", "openrouter", "anthropic", "openai", "stub", "none"] = "openrouter"
-    llm_circuit_breaker_threshold: int = 3
-    llm_circuit_breaker_cooldown_s: int = 60
-    llm_timeout_s: int = 25
-
-    gemini_api_key: Optional[str] = None
-    gemini_model: str = "gemini-2.0-flash"
-    openrouter_api_key: Optional[str] = None
-    openrouter_model: str = "google/gemini-2.0-flash-exp:free"
-    openai_api_key: Optional[str] = None
-    openai_model: str = "gpt-4o-mini"
-    anthropic_api_key: Optional[str] = None
-    anthropic_model: str = "claude-3-5-sonnet-latest"
+    # LLM provider, model, API keys, and circuit-breaker parameters are managed
+    # in the database via the llm_config table (ARC-023).
+    # Configure via the UI at http://localhost:5173 → LLM Config.
+    # Do NOT add LLM variables here.
 
     # ----- Ticket -----
     ticket_provider: Literal["mock", "gitlab", "jira"] = "mock"
@@ -48,10 +38,22 @@ class Settings(BaseSettings):
     storage_provider: Literal["memory", "postgres"] = "postgres"
     app_database_url: str = "postgresql+asyncpg://sre:sre@app-db:5432/sre_agent"
 
+    # ----- LLM Config Provider (HU-P029) -----
+    # When "postgres", config is persisted in llm_config table with encrypted keys.
+    # When "memory", config lives in-process (testing/single-node only).
+    llm_config_provider: Literal["memory", "postgres"] = "postgres"
+    # Fernet key for encrypting API keys at rest. REQUIRED when llm_config_provider=postgres.
+    # Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    # Must be a URL-safe base64-encoded 32-byte secret. Set CONFIG_ENCRYPTION_KEY env var.
+    config_encryption_key: Optional[str] = None
+
     # ----- Context / RAG -----
-    context_provider: Literal["static", "faiss"] = "faiss"
+    context_provider: Literal["static", "faiss", "github"] = "github"
     eshop_context_dir: Path = Path("/app/eshop-context")
     faiss_index_path: Path = Path("/data/faiss/eshop.index")
+    # GitHub-indexed context (HU-P030)
+    faiss_github_index_path: Path = Path("/data/faiss/eshop_github.index")
+    eshop_repo_url: str = "https://github.com/dotnet-architecture/eShopOnWeb"
 
     # ----- Mock services -----
     mock_services_url: str = "http://mock-services:9000"
@@ -72,17 +74,31 @@ class Settings(BaseSettings):
     # Set SRE_API_KEY in the environment for any non-local deployment.
     api_key: str = "sre-demo-key"
 
+    # ----- JWT / Auth (HU-P017) -----
+    # JWT_SECRET must be overridden in production — see _reject_stub_in_production.
+    jwt_secret: str = "sre-dev-jwt-secret-change-in-production"
+    jwt_algorithm: str = "HS256"
+    jwt_expire_minutes: int = 480  # 8 hours
+
+    # ----- CORS (HU-P031) -----
+    # Origins allowed to make cross-site requests to the API.
+    # sre-web (Nginx Docker) + Vite dev server.
+    # Never use "*" in production — explicit list required.
+    cors_allow_origins: list[str] = [
+        "http://localhost:5173",
+        "http://sre-web:80",
+        "http://sre-web",
+        "http://localhost:80",
+    ]
+
     @model_validator(mode="after")
-    def _reject_stub_in_production(self) -> "Settings":
-        """Prevent accidental stub usage in production — CR-005."""
+    def _reject_weak_jwt_in_production(self) -> "Settings":
+        """Prevent insecure JWT secret in production — CR-005."""
         if self.app_env == "production":
-            if self.llm_provider == "stub":
+            if self.jwt_secret == "sre-dev-jwt-secret-change-in-production":
                 raise ValueError(
-                    "LLM_PROVIDER=stub is forbidden in production. Set a real provider."
-                )
-            if self.llm_fallback_provider == "stub":
-                raise ValueError(
-                    "LLM_FALLBACK_PROVIDER=stub is forbidden in production."
+                    "JWT_SECRET must be changed in production. "
+                    "Set JWT_SECRET to a secure random value (min 32 chars)."
                 )
         return self
 

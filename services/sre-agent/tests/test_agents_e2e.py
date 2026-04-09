@@ -109,13 +109,27 @@ class MockContextProvider:
 
 def _make_container(llm=None):
     """Build a Container-like object with all mock adapters."""
+    from unittest.mock import MagicMock
     from app.infrastructure.container import Container
+
+    # jwt_adapter and auth_service are required by Container since HU-P017
+    # but are not exercised by e2e pipeline tests — use lightweight mocks.
+    mock_jwt = MagicMock()
+    mock_auth_svc = MagicMock()
+
+    from app.adapters.llm_config.memory_adapter import MemoryLLMConfigAdapter
+    from app.adapters.platform_config.memory_adapter import MemoryPlatformConfigAdapter
+
     return Container(
         llm=llm or MockLLMProvider(),
         ticket=MockTicketProvider(),
         notify=MockNotifyProvider(),
         storage=MemoryStorageAdapter(),
         context=MockContextProvider(),
+        jwt_adapter=mock_jwt,
+        auth_service=mock_auth_svc,
+        llm_config_provider=MemoryLLMConfigAdapter(),
+        platform_config_provider=MemoryPlatformConfigAdapter(),
     )
 
 

@@ -6,7 +6,7 @@
 ![Langfuse](https://img.shields.io/badge/Langfuse-self--hosted-blueviolet)
 ![Gemini](https://img.shields.io/badge/LLM-Gemini%202.0%20Flash-4285F4?logo=google&logoColor=white)
 ![Docker](https://img.shields.io/badge/docker--compose-one--command-2496ED?logo=docker&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-93%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-237%2B%20passing-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 > Built for the SoftServe **AgentX Hackathon 2026** — 48-hour sprint.  
@@ -42,13 +42,14 @@ Every stage emits a **named Langfuse span** under a single correlation ID — ju
 # 1. Clone and configure
 git clone <repo-url>
 cp .env.example .env
-# Edit .env — set GEMINI_API_KEY=<your-key>  (only required field)
+# No edits needed — .env.example has working demo values
+# After startup: configure your LLM API key from the UI → LLM Config
 
 # 2. Start everything
 docker compose up --build
 
 # 3. Open the UI
-open http://localhost:8000        # Submit an incident
+open http://localhost:5173        # React UI — login and submit an incident
 
 # 4. Watch it run in Langfuse
 open http://localhost:3000        # All 6 stages traced live
@@ -69,8 +70,8 @@ See [`QUICKGUIDE.md`](QUICKGUIDE.md) for a step-by-step walkthrough.
 
 ```
 ┌─────────────┐    HTTP    ┌─────────────────────────────────────────────────┐
-│  Browser UI │──────────▶│                 sre-agent                       │
-│  (HTMX form)│           │  FastAPI + LangGraph state machine              │
+│  React SPA  │──────────▶│                 sre-agent                       │
+│  (sre-web)  │           │  FastAPI + LangGraph state machine              │
 └─────────────┘           │                                                  │
                           │  ┌──────────┐  ┌────────┐  ┌─────────────────┐ │
                           │  │ Intake   │  │ Triage │  │   Integration   │ │
@@ -100,7 +101,8 @@ See [`QUICKGUIDE.md`](QUICKGUIDE.md) for a step-by-step walkthrough.
 | LLM fallback | OpenRouter (circuit-breaker pattern) |
 | Observability | Langfuse — self-hosted in Docker |
 | Metrics | Prometheus + `/metrics` endpoint |
-| Frontend | HTML + HTMX + Tailwind CDN (zero-build) |
+| Frontend | React 18 + TypeScript + Vite + Tailwind CSS + Zustand + TanStack Query |
+| Auth | Mock Google OAuth + JWT HS256 + RBAC (5 roles) |
 | Storage | PostgreSQL via SQLAlchemy + Alembic |
 | RAG | FAISS in-process (curated eShop context) |
 | Mocks | FastAPI `mock-services` (GitLab API + Slack + email) |
@@ -220,7 +222,8 @@ Files: `evals/runner.py`, `evals/judge.py`, `evals/datasets/`, `.github/workflow
 │   │   │   ├── security/       <- Prompt injection defense
 │   │   │   ├── llm/            <- Prompt registry + YAML templates
 │   │   │   └── infrastructure/ <- Config, container wiring, DB
-│   │   └── tests/              <- 93 unit + contract tests
+│   │   └── tests/              <- 237+ unit + contract tests
+│   ├── sre-web/                <- React 18 + TypeScript + Vite SPA (Nginx, port 5173)
 │   └── mock-services/          <- FastAPI mock: GitLab Issues API + Slack webhook + SMTP
 ├── eshop-context/
 │   └── curated/                <- Chunked eShop source excerpts for RAG
@@ -240,7 +243,7 @@ Files: `evals/runner.py`, `evals/judge.py`, `evals/datasets/`, `.github/workflow
 
 ```bash
 cd services/sre-agent
-python -m pytest -q      # 93 tests, ~2 s
+python -m pytest -q      # 237+ tests, ~2 s
 ```
 
 Tests are organized by Acceptance Criterion and Business Rule — each `describe` block maps to a specific AC or BR from the user stories.
@@ -249,25 +252,17 @@ Tests are organized by Acceptance Criterion and Business Rule — each `describe
 
 ## Configuration Reference
 
-All configuration is in `.env.example` with inline documentation.
-Copy it to `.env` and set at minimum:
+All configuration is in `.env.example` with working demo defaults.
+Copy to `.env` — no edits required for a local demo:
 
 ```bash
-GEMINI_API_KEY=<your-key>        # Required — free tier works
-# Everything else has working defaults for the demo
+cp .env.example .env
 ```
 
-Key defaults:
+LLM provider, model, and API keys are configured from the UI after startup:
+**http://localhost:5173 → Sidebar → LLM Config → enter your API key → Save & Reload**
 
-| Variable | Default | Notes |
-|----------|---------|-------|
-| `LLM_PROVIDER` | `gemini` | Primary LLM |
-| `LLM_FALLBACK_PROVIDER` | `openrouter` | Auto-activates on circuit-break |
-| `TICKET_PROVIDER` | `mock` | Uses mock-services |
-| `NOTIFY_PROVIDER` | `mock` | Uses mock-services |
-| `STORAGE_PROVIDER` | `postgres` | App-db container |
-| `CONTEXT_PROVIDER` | `faiss` | Built from `eshop-context/` on startup |
-| `LANGFUSE_ENABLED` | `true` | Set `false` to disable tracing |
+The key is stored encrypted in the database. Hot-reload takes < 5 seconds. No container restart needed.
 
 ---
 
@@ -275,7 +270,8 @@ Key defaults:
 
 | URL | Service |
 |-----|---------|
-| `http://localhost:8000` | SRE Agent UI + REST API |
+| `http://localhost:5173` | **React UI — main platform (login here)** |
+| `http://localhost:8000` | FastAPI REST API + Swagger (`/docs`) |
 | `http://localhost:8000/metrics` | Prometheus metrics |
 | `http://localhost:8000/health` | Health check (JSON) |
 | `http://localhost:3000` | Langfuse dashboard |

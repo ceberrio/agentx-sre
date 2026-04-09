@@ -8,6 +8,7 @@ from .notification import (
 )
 from .triage import TriagePrompt, TriageResult, InjectionVerdict
 from .context import ContextDoc
+from .llm_config import LLMConfig
 
 __all__ = [
     "Incident",
@@ -23,4 +24,5 @@ __all__ = [
     "TriageResult",
     "InjectionVerdict",
     "ContextDoc",
+    "LLMConfig",
 ]

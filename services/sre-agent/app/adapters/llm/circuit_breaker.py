@@ -44,6 +44,25 @@ class LLMCircuitBreaker(ILLMProvider):
         self._timeout_s = timeout_s
         self._consecutive_failures = 0
         self._opened_at: Optional[float] = None
+        self._lock = asyncio.Lock()
+
+    # ----- reconfiguration (HU-P029) -----
+
+    def reconfigure(self, threshold: int, cooldown_s: int) -> None:
+        """Update circuit-breaker parameters without replacing the adapter.
+
+        Called atomically by container.reconfigure_circuit_breaker() under the
+        hot-reload lock. Resets failure state so the next call uses the new
+        parameters from a clean slate.
+        """
+        self._threshold = threshold
+        self._cooldown_s = cooldown_s
+        self._consecutive_failures = 0
+        self._opened_at = None
+        log.info(
+            "circuit_breaker.reconfigured",
+            extra={"threshold": threshold, "cooldown_s": cooldown_s},
+        )
 
     # ----- state helpers -----
     def _is_open(self) -> bool:
@@ -56,15 +75,17 @@ class LLMCircuitBreaker(ILLMProvider):
             return False
         return True
 
-    def _record_success(self) -> None:
-        self._consecutive_failures = 0
-        self._opened_at = None
+    async def _record_success(self) -> None:
+        async with self._lock:
+            self._consecutive_failures = 0
+            self._opened_at = None
 
-    def _record_failure(self) -> None:
-        self._consecutive_failures += 1
-        if self._consecutive_failures >= self._threshold:
-            self._opened_at = time.monotonic()
-            log.warning("circuit_breaker.opened", extra={"failures": self._consecutive_failures})
+    async def _record_failure(self) -> None:
+        async with self._lock:
+            self._consecutive_failures += 1
+            if self._consecutive_failures >= self._threshold:
+                self._opened_at = time.monotonic()
+                log.warning("circuit_breaker.opened", extra={"failures": self._consecutive_failures})
 
     # ----- ILLMProvider implementation -----
     async def triage(self, prompt: TriagePrompt) -> TriageResult:
@@ -73,11 +94,11 @@ class LLMCircuitBreaker(ILLMProvider):
                 result = await asyncio.wait_for(
                     self._primary.triage(prompt), timeout=self._timeout_s
                 )
-                self._record_success()
+                await self._record_success()
                 return result
             except Exception as e:  # noqa: BLE001
                 log.warning("triage.primary_failed", extra={"error": str(e)})
-                self._record_failure()
+                await self._record_failure()
 
         if self._fallback is not None:
             try:
@@ -110,11 +131,11 @@ class LLMCircuitBreaker(ILLMProvider):
                 result = await asyncio.wait_for(
                     self._primary.generate(prompt), timeout=self._timeout_s
                 )
-                self._record_success()
+                await self._record_success()
                 return result
             except Exception as e:  # noqa: BLE001
                 log.warning("generate.primary_failed", extra={"error": str(e)})
-                self._record_failure()
+                await self._record_failure()
 
         if self._fallback is not None:
             try:
@@ -132,11 +153,18 @@ class LLMCircuitBreaker(ILLMProvider):
     async def classify_injection(self, text: str) -> InjectionVerdict:
         try:
             return await self._primary.classify_injection(text)
-        except Exception:  # noqa: BLE001
-            if self._fallback is not None:
+        except Exception as e:  # noqa: BLE001
+            log.warning("classify_injection.primary_failed", extra={"error": str(e)})
+
+        if self._fallback is not None:
+            try:
                 return await self._fallback.classify_injection(text)
-            # Fail-closed: if guardrail LLM is down, treat as uncertain
-            return InjectionVerdict(verdict="uncertain", score=0.5, reason="guardrail_llm_unavailable")
+            except Exception as e:  # noqa: BLE001
+                log.error("classify_injection.fallback_failed", extra={"error": str(e)})
+
+        # Fail-closed: if guardrail LLM is down, treat as uncertain
+        log.error("classify_injection.degraded_mode")
+        return InjectionVerdict(verdict="uncertain", score=0.5, reason="guardrail_llm_unavailable")
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
         # Embeddings only flow through primary (Gemini). No fallback for embeddings.

@@ -1,14 +1,14 @@
 # Quick Guide — Run the Demo in 5 Minutes
 
-> Goal: from `git clone` to a running 6-stage agent demo in under 5 minutes.
+> Goal: from `git clone` to a running SRE Incident Triage Platform demo in minutes.
 
 ---
 
 ## Prerequisites
 
 - **Docker Desktop** (or Docker Engine + Compose v2)
-- **An LLM API key** — pick one:
-  - Google Gemini (recommended, free tier): https://aistudio.google.com/app/apikey
+- **An LLM API key** (optional for first boot — configure from the UI after startup):
+  - Google Gemini (recommended): https://aistudio.google.com/app/apikey
   - OpenRouter (single key, many models): https://openrouter.ai/keys
 
 That's it. **No Python, no Node, no anything else** needs to be installed on the host.
@@ -30,22 +30,16 @@ cd <repo>
 cp .env.example .env
 ```
 
-Open `.env` in your editor and fill in **at least one** of:
+`.env.example` already contains working demo values — **no manual generation needed** for a local demo. The copy is immediately ready to use.
 
-```env
-LLM_PROVIDER=gemini
-GEMINI_API_KEY=AIza...your-key-here...
-```
+> **For production deployments only:** Replace `CONFIG_ENCRYPTION_KEY`, `LANGFUSE_NEXTAUTH_SECRET`, and `LANGFUSE_SALT` with securely generated values before any non-local deployment. See the comments in `.env.example` for generation commands.
 
-…or, if you prefer OpenRouter:
+> **Important:** If you already ran `docker compose up` with placeholder values, run `docker compose down -v` before starting again — Langfuse seeds its DB on first boot and needs the correct secrets from the start.
 
-```env
-LLM_PROVIDER=openrouter
-OPENROUTER_API_KEY=sk-or-...your-key-here...
-OPENROUTER_MODEL=google/gemini-2.0-flash-exp:free
-```
-
-> **OpenRouter tip:** OpenRouter is the easiest way to switch providers without changing code. You can point `OPENROUTER_MODEL` at any model in their catalog (Gemini, Claude, GPT-4o, Mistral, etc.) and the agent will use it. Useful if your primary key gets rate-limited mid-demo.
+> **LLM API key — do NOT put it in `.env`.**
+> The system boots in `stub` mode (keyword-based triage, no API key needed).
+> Once running, go to **http://localhost:5173 → LLM Config → enter your key → Save & Reload**.
+> The key is stored encrypted in the DB. Hot-reload takes < 5s. No container restart needed.
 
 ### 3. Run
 
@@ -53,47 +47,112 @@ OPENROUTER_MODEL=google/gemini-2.0-flash-exp:free
 docker compose up --build
 ```
 
-First build takes ~2 minutes (Langfuse stack pulls Postgres). Subsequent runs are instant.
+First build takes **15–20 minutes** (downloads PyTorch, FAISS, sentence-transformers). Subsequent runs use cache and start in < 30 seconds.
 
-When the logs go quiet, the system is ready.
+When you see `app.started` in the logs, the system is ready.
 
-### 4. Open the URLs
+### 4. URLs
 
 | URL | What you'll see |
-|---|---|
-| http://localhost:8000 | **The agent UI** — submit an incident here |
-| http://localhost:3000 | **Langfuse** — login with `demo@demo.com` / `demo` (first run creates it). Watch the 6 stages light up live as the agent runs. |
-| http://localhost:9000/docs | **Mock services** Swagger — see tickets created and notifications fired |
+|-----|-----------------|
+| **http://localhost:5173** | **React UI** — main platform (login here) |
+| http://localhost:8000/docs | FastAPI Swagger — test endpoints directly |
+| http://localhost:8000/health | Backend health check (no auth required) |
+| http://localhost:9000/docs | Mock services — see tickets and notifications |
+| http://localhost:3000 | Langfuse — traces dashboard (`demo@demo.com` / `demo1234`) |
 
-### 5. Run the demo flow
+> **Port 5173 is the UI.** Port 8000 is the backend API only.
 
-1. Go to http://localhost:8000
-2. Fill the form: title, description, your email, and **upload a screenshot or log file** (multimodal is mandatory)
-3. Click **Submit Incident**
-4. Watch the page show stages 1–5 turning green in real time
-5. Click the resulting ticket → **Mark as Resolved**
-6. Stage 6 (Resolve Notify) lights up — you'll see the reporter notification in the Langfuse trace and at `http://localhost:9000/notifications`
+### 5. Login
 
-### 6. Inspect the traces
+Open **http://localhost:5173** and use one of these demo accounts:
 
-Open Langfuse → **Traces** → click the latest trace. You'll see one root span per incident with 6 child spans (`agent.ingest`, `agent.guardrails`, `agent.triage`, `agent.ticket.create`, `agent.notify.team`, `agent.notify.resolve`), each with inputs, outputs, latency, and token usage.
+| Email | Role | Access |
+|-------|------|--------|
+| `admin@softserve.com` | superadmin | Everything — including LLM config |
+| `sre-lead@softserve.com` | admin | Config, user list |
+| `config@softserve.com` | flow_configurator | Agents, governance |
+| `operator@softserve.com` | operator | Create and resolve incidents |
+| `viewer@softserve.com` | viewer | Dashboard only (read-only) |
+
+Click **Sign in with Google** — no password needed (mock auth for demo).
+
+### 6. Demo flow
+
+1. Go to **http://localhost:5173/incidents/new**
+2. Fill in: title, description, reporter email
+3. Optionally attach a screenshot or log file
+4. Click **Submit** — watch the 4-stage progress animation
+5. You'll be redirected to the incident detail page
+6. See the triage result: severity, root cause, suggested owners, confidence score
+7. Click **Resolve** (admin/superadmin) → confirm in the modal
+8. Go to **http://localhost:9000/docs** → see the ticket created and notification sent
+
+### 7. Configure LLM from the UI
+
+1. Login as `admin@softserve.com`
+2. Sidebar → **LLM Config**
+3. Change provider, model, API key
+4. Click **Save & Reload** — hot-reload in < 5s, no container restart needed
+
+### 8. Inspect traces in Langfuse
+
+Open **http://localhost:3000** → **Traces** → click the latest trace.
+
+You'll see spans for each agent stage:
+`agent.ingest` → `agent.guardrails` → `agent.triage` → `agent.ticket.create` → `agent.notify.team`
+
+Each span shows inputs, outputs, latency, and token usage.
+
+---
+
+## API Access (curl / Postman)
+
+**Get a JWT token:**
+```bash
+curl -s -X POST http://localhost:8000/auth/mock-google-login \
+  -H "Content-Type: application/json" \
+  -d '{"email": "admin@softserve.com"}'
+```
+
+**Use the token:**
+```bash
+curl http://localhost:8000/incidents \
+  -H "Authorization: Bearer <access_token>"
+```
+
+**Or use API Key (no login needed, for CI/scripts):**
+```bash
+curl http://localhost:8000/incidents -H "X-API-Key: sre-demo-key"
+```
+
+**Public endpoints (no auth):**
+- `GET /health`
+- `GET /metrics`
+- `GET /context/status`
+- `POST /auth/mock-google-login`
 
 ---
 
 ## Troubleshooting
 
 | Symptom | Fix |
-|---|---|
-| Port 3000/8000/9000 already in use | Edit `docker-compose.yml` → change the host-side port |
-| `GEMINI_API_KEY missing` in logs | Ensure `.env` exists at repo root and contains the key |
-| Langfuse UI blank after login | Refresh once — first launch initializes the project |
-| Want to skip Langfuse for a faster boot | Set `LANGFUSE_ENABLED=false` in `.env` and remove the langfuse services from the compose file |
+|---------|-----|
+| `CONFIG_ENCRYPTION_KEY is required` | Add `CONFIG_ENCRYPTION_KEY=<fernet_key>` to `.env` (see Step 2) |
+| `nginx: chown failed (Operation not permitted)` | Already fixed in Dockerfile — run `docker compose up --build sre-web` |
+| `npm ci` error on build | Already fixed — Dockerfile uses `npm install` |
+| Port already in use | Edit `docker-compose.yml` → change the host-side port |
+| `container.llm_hydration_failed` in logs | DB not ready yet at startup — normal on first boot. The app starts in stub mode; set your LLM key from the UI → LLM Config |
+| Langfuse refuses connection / blank after login | Run `docker compose down -v` then `docker compose up -d` — placeholder secrets break the first-boot DB seed |
+| Langfuse shows "Create Account" after `docker compose up` | The DB was seeded before the user init vars were added. Run `docker compose down -v && docker compose up --build` to re-seed with the demo user. |
+| Want to skip Langfuse | Set `LANGFUSE_ENABLED=false` in `.env` |
+| `faiss.build_failed` in logs | Normal if Gemini key not set — FAISS needs embeddings. Set a valid API key or switch to `CONTEXT_PROVIDER=static` in `.env` |
 
 ---
 
 ## Stop everything
 
 ```bash
-docker compose down            # stop containers
-docker compose down -v         # also remove Langfuse DB volume
+docker compose down          # stop containers, keep volumes
+docker compose down -v       # stop containers + delete all data (fresh start)
 ```

@@ -1,0 +1,108 @@
+/* Tailwind CSS directives */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+  CSS Custom Properties — SoftServe Design System Tokens (AC-02)
+  Mirrors the Tailwind theme for use in non-Tailwind contexts (inline SVG, canvas, etc.)
+  Source of truth: HU-P031 v3 — Brandfetch + logo.com verified colors
+*/
+:root {
+  /* Brand colors */
+  --color-primary: #454494;
+  --color-primary-dark: #333278;
+  --color-primary-light: #5d5cb0;
+  --color-primary-lighter: #eeedf8;
+
+  /* Neutral palette */
+  --color-neutral-900: #1a1a2e;
+  --color-neutral-800: #2d2d44;
+  --color-neutral-700: #4a4a6a;
+  --color-neutral-600: #6b6b8a;
+  --color-neutral-500: #8e8eaa;
+  --color-neutral-400: #adadc4;
+  --color-neutral-300: #cacad9;
+  --color-neutral-200: #e2e2ed;
+  --color-neutral-100: #f1f1f8;
+  --color-neutral-50: #f8f8fc;
+
+  /* Semantic colors */
+  --color-success: #22c55e;
+  --color-warning: #f59e0b;
+  --color-error: #ef4444;
+  --color-info: #3b82f6;
+  --color-success-light: #dcfce7;
+  --color-warning-light: #fef3c7;
+  --color-error-light: #fee2e2;
+  --color-info-light: #dbeafe;
+
+  /* Typography */
+  --font-family-primary: 'Montserrat', 'Inter', sans-serif;
+  --font-family-body: 'Inter', 'Open Sans', sans-serif;
+  --font-family-mono: 'JetBrains Mono', 'Fira Code', monospace;
+
+  --font-size-xs: 12px;
+  --font-size-sm: 14px;
+  --font-size-base: 16px;
+  --font-size-lg: 18px;
+  --font-size-xl: 24px;
+  --font-size-2xl: 32px;
+
+  --font-weight-normal: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+
+  /* Spacing */
+  --spacing-1: 4px;
+  --spacing-2: 8px;
+  --spacing-3: 12px;
+  --spacing-4: 16px;
+  --spacing-6: 24px;
+  --spacing-8: 32px;
+
+  /* Border radius */
+  --border-radius-sm: 4px;
+  --border-radius-md: 8px;
+  --border-radius-lg: 12px;
+  --border-radius-full: 9999px;
+
+  /* Shadows */
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.1);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.15);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.2);
+}
+
+/* Base reset and typography */
+@layer base {
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
+
+  html {
+    font-family: var(--font-family-primary);
+    font-size: var(--font-size-base);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    margin: 0;
+    background-color: #f8f8fc; /* neutral-50 */
+    color: #1a1a2e; /* neutral-900 */
+  }
+
+  /* BR-05: Only transition-colors and transition-shadow — no complex animations */
+  button,
+  a,
+  input,
+  select,
+  textarea {
+    transition-property: color, background-color, border-color, box-shadow;
+    transition-duration: 150ms;
+    transition-timing-function: ease-in-out;
+  }
+}

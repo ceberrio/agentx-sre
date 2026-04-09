@@ -1,12 +1,21 @@
-"""HTTP layer — thin. Translates HTTP to Incident, runs the graph, returns JSON."""
+"""HTTP layer — thin. Translates HTTP to Incident, runs the graph, returns JSON.
+
+Auth (HU-P018):
+  POST /incidents            — any authenticated user (Bearer JWT or X-API-Key)
+  GET  /incidents            — any authenticated user
+  GET  /incidents/{id}       — any authenticated user
+  POST /incidents/{id}/resolve — operator, flow_configurator, admin, superadmin
+"""
 from __future__ import annotations
 
 import logging
 import uuid
 
-from fastapi import APIRouter, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
 
+from app.api.deps import get_current_user_or_api_key, require_role
 from app.domain.entities import Incident
+from app.domain.entities.user import User, UserRole
 from app.infrastructure.config import settings
 from app.infrastructure.container import get_container
 from app.orchestration.orchestrator import (
@@ -46,6 +55,7 @@ async def create_incident(
     description: str = Form(...),
     log_file: UploadFile | None = None,
     image: UploadFile | None = None,
+    _current_user: User = Depends(get_current_user_or_api_key),
 ) -> dict:
     container = get_container()
     max_bytes = settings.max_upload_size_mb * 1024 * 1024
@@ -105,27 +115,54 @@ async def create_incident(
 
 
 @router.get("")
-async def list_incidents() -> list[dict]:
+async def list_incidents(
+    current_user: User = Depends(get_current_user_or_api_key),
+) -> list[dict]:
     container = get_container()
     items = await container.storage.list_incidents()
+    # RBAC filter: operators only see their own incidents (ARC-022, least-privilege).
+    if current_user.role == UserRole.OPERATOR:
+        items = [i for i in items if i.reporter_email == current_user.email]
     return [i.model_dump(mode="json") for i in items]
 
 
 @router.get("/{incident_id}")
-async def get_incident(incident_id: str) -> dict:
+async def get_incident(
+    incident_id: str,
+    current_user: User = Depends(get_current_user_or_api_key),
+) -> dict:
     container = get_container()
     incident = await container.storage.get_incident(incident_id)
     if incident is None:
+        raise HTTPException(status_code=404, detail="incident_not_found")
+    # IDOR guard (VUL-M03): operators may only access their own incidents.
+    if current_user.role == UserRole.OPERATOR and incident.reporter_email != current_user.email:
         raise HTTPException(status_code=404, detail="incident_not_found")
     return incident.model_dump(mode="json")
 
 
 @router.post("/{incident_id}/resolve")
-async def resolve_incident(incident_id: str) -> dict:
-    """Manual resolution trigger (DEC-004)."""
+async def resolve_incident(
+    incident_id: str,
+    current_user: User = Depends(
+        require_role(
+            UserRole.OPERATOR,
+            UserRole.FLOW_CONFIGURATOR,
+            UserRole.ADMIN,
+            UserRole.SUPERADMIN,
+        )
+    ),
+) -> dict:
+    """Manual resolution trigger (DEC-004).
+
+    Requires at minimum operator role. Viewers cannot trigger resolution.
+    """
     container = get_container()
     incident = await container.storage.get_incident(incident_id)
     if incident is None:
+        raise HTTPException(status_code=404, detail="incident_not_found")
+    # IDOR guard (VUL-M03): operators may only resolve their own incidents.
+    if current_user.role == UserRole.OPERATOR and incident.reporter_email != current_user.email:
         raise HTTPException(status_code=404, detail="incident_not_found")
 
     # Look up the ticket via provider — in mock mode this round-trips through mock-services

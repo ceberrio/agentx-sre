@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 40" role="img" aria-label="SoftServe">
+  <!--
+    SoftServe wordmark placeholder — Montserrat Bold, brand color #454494.
+    AC-04, AC-05, BR-02: wordmark used until official SVG asset is provided.
+    Official logo SVG available at:
+    https://commons.wikimedia.org/wiki/File:SoftServe_logo_2017.svg
+  -->
+  <text
+    x="0"
+    y="30"
+    font-family="Montserrat, Inter, sans-serif"
+    font-weight="700"
+    font-size="26"
+    fill="#454494"
+    letter-spacing="-0.5"
+  >SoftServe</text>
+</svg>

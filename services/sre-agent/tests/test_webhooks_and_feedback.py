@@ -8,6 +8,10 @@ AC-05: POST /incidents/{id}/feedback accepts positive and negative ratings.
 BR-01: Resolution webhook triggers background task without blocking HTTP response.
 BR-02: Feedback endpoint never logs the comment content (PII boundary).
 BR-03: Empty incident_id or ticket_id in webhook payload returns 422.
+
+Note (HU-P018): Routes now enforce auth per-route. Tests focused on business logic
+override get_current_user_or_api_key to bypass auth. Auth behavior is tested
+separately in test_dual_auth.py.
 """
 from __future__ import annotations
 
@@ -22,6 +26,7 @@ from typing import Any
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from app.api import deps
 from app.domain.entities import (
     Incident,
     IncidentStatus,
@@ -34,7 +39,33 @@ from app.domain.entities import (
     TeamNotification,
     ReporterNotification,
 )
+from app.domain.entities.user import User, UserRole
 from app.domain.ports import IStorageProvider
+
+
+# ---------------------------------------------------------------------------
+# Auth bypass helper (HU-P018)
+# ---------------------------------------------------------------------------
+
+
+def _bypass_auth(app: FastAPI) -> None:
+    """Override get_current_user_or_api_key to bypass auth in business-logic tests."""
+    import uuid
+    from datetime import datetime, timezone
+
+    _user = User(
+        id=uuid.UUID("00000000-0000-0000-0000-000000000001"),
+        email="system@sre-agent.internal",
+        full_name="System (Test Override)",
+        role=UserRole.SUPERADMIN,
+        is_active=True,
+        created_at=datetime.now(timezone.utc),
+    )
+
+    async def _no_auth() -> User:
+        return _user
+
+    app.dependency_overrides[deps.get_current_user_or_api_key] = _no_auth
 
 
 # ---------------------------------------------------------------------------
@@ -127,6 +158,7 @@ def test_resolution_webhook_returns_202():
     from app.api.routes_webhooks import router as webhooks_router
     app = FastAPI()
     app.include_router(webhooks_router)
+    _bypass_auth(app)
 
     mock_graph = MagicMock()
     mock_graph.ainvoke = AsyncMock(return_value={"status": "resolved", "events": []})
@@ -160,6 +192,7 @@ def test_resolution_webhook_missing_ticket_id_returns_422():
     from app.api.routes_webhooks import router as webhooks_router
     app = FastAPI()
     app.include_router(webhooks_router)
+    _bypass_auth(app)
 
     client = TestClient(app, raise_server_exceptions=False)
     response = client.post(
@@ -174,6 +207,7 @@ def test_resolution_webhook_missing_incident_id_returns_422():
     from app.api.routes_webhooks import router as webhooks_router
     app = FastAPI()
     app.include_router(webhooks_router)
+    _bypass_auth(app)
 
     client = TestClient(app, raise_server_exceptions=False)
     response = client.post(
@@ -196,6 +230,7 @@ def test_feedback_positive_rating_for_known_incident():
     from app.api.routes_feedback import router as feedback_router
     app = FastAPI()
     app.include_router(feedback_router)
+    _bypass_auth(app)
 
     client = TestClient(app)
     with patch("app.api.routes_feedback.get_container", return_value=container):
@@ -222,6 +257,7 @@ def test_feedback_unknown_incident_returns_404():
     from app.api.routes_feedback import router as feedback_router
     app = FastAPI()
     app.include_router(feedback_router)
+    _bypass_auth(app)
 
     client = TestClient(app)
     with patch("app.api.routes_feedback.get_container", return_value=container):
@@ -246,6 +282,7 @@ def test_feedback_negative_rating_accepted():
     from app.api.routes_feedback import router as feedback_router
     app = FastAPI()
     app.include_router(feedback_router)
+    _bypass_auth(app)
 
     client = TestClient(app)
     with patch("app.api.routes_feedback.get_container", return_value=container):
@@ -262,6 +299,7 @@ def test_feedback_invalid_rating_rejected():
     from app.api.routes_feedback import router as feedback_router
     app = FastAPI()
     app.include_router(feedback_router)
+    _bypass_auth(app)
 
     client = TestClient(app)
     response = client.post(
@@ -284,6 +322,7 @@ def test_resolution_webhook_is_non_blocking():
     from app.api.routes_webhooks import router as webhooks_router
     app = FastAPI()
     app.include_router(webhooks_router)
+    _bypass_auth(app)
 
     async def _slow_graph(*args, **kwargs):
         await asyncio.sleep(0)  # yield once — TestClient should still return quickly
@@ -319,6 +358,7 @@ def test_feedback_comment_content_is_not_logged(caplog):
     from app.api.routes_feedback import router as feedback_router
     app = FastAPI()
     app.include_router(feedback_router)
+    _bypass_auth(app)
 
     pii_comment = "My SSN is 123-45-6789 and this triage was wrong"
     client = TestClient(app)
@@ -347,6 +387,7 @@ def test_resolution_webhook_empty_strings_rejected():
     from app.api.routes_webhooks import router as webhooks_router
     app = FastAPI()
     app.include_router(webhooks_router)
+    _bypass_auth(app)
 
     client = TestClient(app, raise_server_exceptions=False)
     with patch("app.api.routes_webhooks.get_container", return_value=container):

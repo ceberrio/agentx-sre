@@ -13,7 +13,7 @@
 # 1. Confirm all containers are up
 docker compose ps
 
-# Expected: sre-agent (8000), mock-services (9000), langfuse-web (3000), app-db (5432)
+# Expected: sre-agent (8000), sre-web (5173), mock-services (9000), langfuse-web (3000), app-db (5432)
 
 # 2. Confirm the agent is healthy
 curl -s http://localhost:8000/health | jq .
@@ -22,7 +22,7 @@ curl -s http://localhost:8000/health | jq .
 
 # 3. Open Langfuse dashboard in a browser
 open http://localhost:3000
-# Login: any email + any password on first run (Langfuse creates the account)
+# Login: demo@demo.com / demo1234 — pre-configured, no setup needed
 ```
 
 ---
@@ -34,7 +34,7 @@ The system assigns a correlation ID immediately.
 
 ### Via UI (preferred for demo)
 
-1. Open `http://localhost:8000` in a browser.
+1. Open `http://localhost:5173` in a browser → Login as `operator@softserve.com` → New Incident.
 2. Fill in the incident form:
    - **Title:** `Checkout API returning 503 — orders failing`
    - **Description:** Paste the text below.
@@ -51,6 +51,11 @@ Screenshot attached showing Grafana spike.
 ### Via curl (alternative)
 
 ```bash
+# Get a JWT token first (alternative to X-API-Key):
+curl -s -X POST http://localhost:8000/auth/mock-google-login \
+  -H "Content-Type: application/json" \
+  -d '{"email": "operator@softserve.com"}' | jq .access_token
+
 curl -s -X POST http://localhost:8000/incidents \
   -H "X-API-Key: sre-demo-key" \
   -F 'title=Checkout API returning 503 — orders failing' \
@@ -198,6 +203,8 @@ curl -s -X POST "http://localhost:9000/tickets/$TICKET_ID/resolve" | jq .
 
 **Expected:** The mock service fires a webhook to `sre-agent`, which sends a resolution email and flips the incident status to `RESOLVED`.
 
+**In the React UI:** Open the incident detail page → click the **Resolve** button (admin/superadmin role required).
+
 ```bash
 # Confirm the incident is now RESOLVED
 curl -s http://localhost:8000/incidents/$INCIDENT_ID -H "X-API-Key: sre-demo-key" | jq '{case_status, resolved_at}'
@@ -260,7 +267,7 @@ sre_pipeline_duration_seconds_bucket{...}
 | Symptom | Likely cause | Fix |
 |---------|-------------|-----|
 | `/health` returns 500 | DB not ready yet | Wait 10 s, retry |
-| Triage returns `severity: unknown` | `GEMINI_API_KEY` missing | Add key to `.env`, restart |
+| Triage returns `severity: unknown` | LLM not configured | Go to `http://localhost:5173` → LLM Config → enter your API key → Save & Reload |
 | Langfuse shows no traces | `LANGFUSE_HOST` wrong | Check if using host vs container network |
 | Mock notifications list is empty | `NOTIFY_PROVIDER` not set to mock | Confirm `.env` has `NOTIFY_PROVIDER=mock` |
 | Injection test not blocked | Static regex list needs rebuild | `docker compose restart sre-agent` |

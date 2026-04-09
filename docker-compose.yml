@@ -3,8 +3,9 @@ version: "3.9"
 # AgentX Hackathon — SRE Incident Triage Agent
 # Single command to run the full demo: `docker compose up --build`
 #
-# Exposed host ports (architecture rule §5.10 — only these three):
-#   8000  -> sre-agent (UI + API)
+# Exposed host ports (architecture rule — see ARCHITECTURE.md §1.2 and DEC-A10):
+#   5173  -> sre-web (React SPA — main platform UI)          [NEW — v4]
+#   8000  -> sre-agent (FastAPI backend + agent pipeline)
 #   9000  -> mock-services (ticketing + notifications)
 #   3000  -> Langfuse UI (observability dashboard)
 #
@@ -19,6 +20,30 @@ version: "3.9"
 name: agentx-sre
 
 services:
+
+  # ----- React SPA frontend (NEW — v4) -----
+  sre-web:
+    build: ./services/sre-web
+    container_name: sre-web
+    ports:
+      - "5173:80"
+    environment:
+      VITE_API_BASE_URL: http://localhost:8000
+    depends_on:
+      sre-agent:
+        condition: service_started
+    networks:
+      - agentx
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+          cpus: '0.25'
 
   sre-agent:
     build: ./services/sre-agent
@@ -107,6 +132,11 @@ services:
       LANGFUSE_INIT_PROJECT_ID: sre-agent
       LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-pk-lf-demo}
       LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-sk-lf-demo}
+      LANGFUSE_INIT_USER_EMAIL: demo@demo.com
+      LANGFUSE_INIT_USER_PASSWORD: demo1234
+      LANGFUSE_INIT_USER_NAME: AgentX Demo
+      LANGFUSE_INIT_ORG_NAME: AgentX SRE
+      LANGFUSE_INIT_PROJECT_NAME: SRE Triage Agent
     networks:
       - agentx
 

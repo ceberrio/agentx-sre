@@ -35,13 +35,13 @@ pytest
 
 These rules are enforced by `@architect`. Violating them will fail review.
 
-1. **The LangGraph state machine in `services/sre-agent/app/agent/graph.py` is the ONLY orchestrator of the pipeline.** Do not add ad-hoc orchestration in `api/` routes — routes should only invoke the graph.
+1. **The LangGraph state machine in `services/sre-agent/app/orchestration/orchestrator/graph.py` is the ONLY orchestrator of the pipeline.** Do not add ad-hoc orchestration in `api/` routes — routes should only invoke the graph.
 2. **Every stage MUST emit a Langfuse span and a structured log line** with the `incident_id` correlation ID. See `app/observability/tracing.py`.
 3. **No LLM call may use raw user input as instructions.** All user input must pass through `app/security/prompt_injection.py` first AND be wrapped in clearly delimited user-content blocks in the prompt template (`app/llm/prompts.py`).
 4. **Tool calls (ticket_client, notify_client) must accept only typed Pydantic args.** Never let an LLM produce a free-form URL, command, or shell string that flows into a tool.
 5. **The agent must never call out to anything except `mock-services` and the configured LLM provider.** No arbitrary HTTP fetches.
 6. **Secrets only via environment variables.** Never commit `.env`. Never hardcode API keys.
-7. **`mock-services` is the boundary.** When the time comes to swap in real GitLab/Slack, only `app/agent/tools/*.py` should change. The graph and nodes should not need edits.
+7. **`mock-services` is the boundary.** When the time comes to swap in real GitLab/Slack, only the adapter implementations under `app/adapters/` should change. The orchestration graph and agents should not need edits.
 
 ---
 
@@ -49,25 +49,39 @@ These rules are enforced by `@architect`. Violating them will fail review.
 
 ```
 services/sre-agent/app/
-├── main.py                  # FastAPI app entrypoint — wires routes + observability
-├── api/                     # HTTP layer ONLY. No business logic. Calls into agent/graph.py.
-├── agent/
-│   ├── graph.py             # LangGraph state machine — the source of truth for the pipeline
-│   ├── state.py             # AgentState TypedDict — the contract between nodes
-│   ├── nodes/               # One file per stage. Each node reads/writes AgentState.
-│   └── tools/               # Typed clients to mock-services. The "outside world" boundary.
-├── llm/
-│   ├── provider.py          # Multi-provider LLM client (gemini/openrouter/openai/anthropic)
-│   └── prompts.py           # Versioned prompt templates. EDIT HERE, not inline in nodes.
-├── security/
-│   ├── prompt_injection.py  # 5-layer defense (sanitize → heuristic → LLM judge → schema → sandbox)
-│   └── input_sanitizer.py
-├── observability/
-│   ├── tracing.py           # Langfuse + correlation ID propagation
-│   └── logging.py           # Structured JSON logging
-├── storage/
-│   └── memory_store.py      # In-memory incident store (NOT for production)
-└── ui/static/               # HTMX templates served by FastAPI
+├── main.py                      # FastAPI entrypoint — lifespan, routers, CORS
+├── api/                         # HTTP layer. Routes only — no business logic.
+│   ├── routes_incidents.py      # POST /incidents, GET /incidents/:id
+│   ├── routes_auth.py           # POST /auth/mock-google-login, GET /auth/me
+│   ├── routes_llm_config.py     # GET/PUT /config/llm (hot-reload)
+│   ├── routes_platform_config.py # Config sections (governance, security, etc.)
+│   ├── routes_feedback.py       # POST /incidents/:id/feedback
+│   └── routes_webhooks.py       # POST /webhooks/resolve
+├── domain/
+│   ├── entities/                # Pure domain: Incident, TriageResult, LLMConfig, User…
+│   └── ports/                   # Port interfaces: ILLMProvider, IStorageProvider…
+├── adapters/                    # Concrete implementations of ports
+│   ├── llm/                     # gemini, openrouter, anthropic, stub, circuit_breaker
+│   ├── storage/                 # postgres_adapter, memory_adapter
+│   ├── llm_config/              # postgres_adapter (Fernet-encrypted), memory_adapter
+│   ├── platform_config/         # postgres_adapter, memory_adapter
+│   ├── auth/                    # jwt_adapter, auth_service
+│   └── context/                 # faiss_adapter, github_adapter, static_adapter
+├── orchestration/               # LangGraph multi-agent pipeline
+│   ├── orchestrator/            # Root graph + router
+│   └── agents/                  # intake_guard, triage, integration, resolution
+├── observability/               # tracing.py, logging.py, metrics.py
+├── security/                    # prompt_injection.py, input_sanitizer.py
+├── llm/                         # prompt_registry.py + YAML prompt templates
+└── infrastructure/              # config.py (Settings), container.py (DI), database.py
+
+services/sre-web/                # React 18 + TypeScript + Vite SPA
+├── src/
+│   ├── api/                     # Axios client, types, hooks (useIncidents, useConfig…)
+│   ├── pages/                   # LoginPage, DashboardPage, IncidentListPage…
+│   ├── components/              # UI components (Button, Badge, FeedbackWidget…)
+│   └── store/                   # Zustand stores (authStore, configStore)
+└── Dockerfile                   # Multi-stage Node→Nginx build
 ```
 
 ---
@@ -88,7 +102,7 @@ Before suggesting or applying any change:
 
 1. Read the relevant **HU** in `docs/user-stories/` first — it contains acceptance criteria.
 2. Read `ARCHITECTURE.md` section **"Architecture Rules — DO NOT BREAK"**.
-3. If you're touching the agent pipeline, read `services/sre-agent/app/agent/graph.py` first to understand state flow.
+3. If you're touching the agent pipeline, read `services/sre-agent/app/orchestration/orchestrator/graph.py` first to understand state flow.
 4. If you're adding a new dependency, **stop and ask** — `@architect` must approve it (rule from `CLAUDE.md`).
 5. If you change observability instrumentation, verify all 6 stages still emit spans (the demo video literally shows this).
 
@@ -97,14 +111,14 @@ Before suggesting or applying any change:
 ## Common tasks — recipes
 
 ### Add a new node to the agent pipeline
-1. Create `app/agent/nodes/<stage_name>.py` with a function `def run(state: AgentState) -> AgentState:`
+1. Create `app/orchestration/agents/<stage_name>/node.py` with a function `def run(state: CaseState) -> CaseState:`
 2. Wrap the body in `with langfuse.start_as_current_span("agent.<stage_name>"):`
-3. Register the node in `app/agent/graph.py` with `graph.add_node(...)` and wire its edges.
-4. Update the UI status template to show the new stage.
+3. Register the node in `app/orchestration/orchestrator/graph.py` with `graph.add_node(...)` and wire its edges.
+4. Update the React UI to display the new stage status if needed.
 
 ### Add a new LLM provider
-1. Add a branch in `app/llm/provider.py` `get_client()` factory.
-2. Add the provider's env vars to `.env.example`.
+1. Add a branch in `app/adapters/llm/` — create a new adapter file implementing the `ILLMProvider` port.
+2. The provider selection and API key are configured from the UI (ARC-023) — no `.env` changes needed. Add the new provider name to the `Literal` type in `LLMProviderName` and handle it in `container.py` `_build_single_llm_from_key()`.
 3. Document it in `QUICKGUIDE.md`.
 
 ### Add a new guardrail pattern

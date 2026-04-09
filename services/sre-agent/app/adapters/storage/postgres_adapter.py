@@ -21,6 +21,7 @@ from app.domain.entities import Incident, IncidentStatus, Severity
 from app.domain.ports import IStorageProvider
 
 
+# TODO: consolidate to shared Base (H-02)
 class Base(DeclarativeBase):
     pass
 
@@ -59,6 +60,12 @@ def _row_to_entity(row: IncidentRow) -> Incident:
     )
 
 
+_ALLOWED_UPDATE_FIELDS: frozenset[str] = frozenset({
+    "status", "severity", "blocked", "blocked_reason",
+    "has_image", "has_log", "updated_at",
+})
+
+
 class PostgresStorageAdapter(IStorageProvider):
     name = "postgres"
 
@@ -92,6 +99,9 @@ class PostgresStorageAdapter(IStorageProvider):
     async def update_incident(
         self, incident_id: str, patch: dict[str, Any]
     ) -> Incident:
+        invalid = set(patch.keys()) - _ALLOWED_UPDATE_FIELDS
+        if invalid:
+            raise ValueError(f"update_incident: disallowed fields: {invalid}")
         async with self._session_factory() as session:
             patch = {**patch, "updated_at": datetime.now(timezone.utc)}
             await session.execute(

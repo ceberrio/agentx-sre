@@ -19,9 +19,11 @@ import asyncio
 import logging
 from typing import Any, Optional
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
 
+from app.api.deps import get_current_user_or_api_key
+from app.domain.entities.user import User
 from app.infrastructure.container import get_container
 from app.orchestration.orchestrator import (
     CaseState,
@@ -115,6 +117,7 @@ async def _run_resolution_background(
 async def resolution_webhook(
     payload: ResolutionWebhookPayload,
     background_tasks: BackgroundTasks,
+    _current_user: User = Depends(get_current_user_or_api_key),
 ) -> dict:
     """Receive a resolution event from the ticket system.
 
