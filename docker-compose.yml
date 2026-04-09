@@ -13,9 +13,8 @@ version: "3.9"
 #   app-db        (Postgres for incident persistence — sre-agent only)
 #   langfuse-db   (Postgres for Langfuse — Langfuse only)
 #
-# Langfuse stack (langfuse-web, langfuse-worker, langfuse-db, langfuse-cache,
-# langfuse-clickhouse, langfuse-minio) can be disabled by removing the
-# `observability` profile or setting LANGFUSE_ENABLED=false in .env.
+# Langfuse stack (langfuse-web, langfuse-db) can be disabled by setting
+# LANGFUSE_ENABLED=false in .env.
 
 name: agentx-sre
 

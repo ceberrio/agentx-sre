@@ -36,14 +36,14 @@ Every stage emits a **named Langfuse span** under a single correlation ID — ju
 
 ## Quick Start
 
-**Requirements:** Docker + Docker Compose, a free [Google AI Studio](https://aistudio.google.com/) API key.
+**Requirements:** Docker + Docker Compose. That's it — no API key needed to start.
 
 ```bash
 # 1. Clone and configure
-git clone <repo-url>
+git clone https://github.com/ceberrio/agentx-sre.git
+cd agentx-sre
 cp .env.example .env
-# No edits needed — .env.example has working demo values
-# After startup: configure your LLM API key from the UI → LLM Config
+# No edits needed — .env.example has working demo values out of the box
 
 # 2. Start everything
 docker compose up --build
@@ -252,17 +252,20 @@ Tests are organized by Acceptance Criterion and Business Rule — each `describe
 
 ## Configuration Reference
 
-All configuration is in `.env.example` with working demo defaults.
-Copy to `.env` — no edits required for a local demo:
-
 ```bash
 cp .env.example .env
+docker compose up --build
 ```
 
-LLM provider, model, and API keys are configured from the UI after startup:
-**http://localhost:5173 → Sidebar → LLM Config → enter your API key → Save & Reload**
+That's all. `.env.example` ships with working demo values — no manual edits required.
 
-The key is stored encrypted in the database. Hot-reload takes < 5 seconds. No container restart needed.
+**The system boots in stub mode** (keyword-based triage, no API key needed). To enable real LLM analysis:
+
+1. Open **http://localhost:5173** → login → Sidebar → **LLM Config**
+2. Select your provider (Gemini, OpenAI, Anthropic, OpenRouter)
+3. Enter your API key → **Save & Reload**
+
+The key is stored encrypted in the database. Hot-reload takes < 5 seconds — no container restart needed.
 
 ---
 
