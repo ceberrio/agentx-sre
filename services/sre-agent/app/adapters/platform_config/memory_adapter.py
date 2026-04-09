@@ -52,6 +52,14 @@ _DEFAULT_SEED: dict[str, dict[str, Any]] = {
         "guardrails_llm_judge_enabled": "false",
         "max_upload_size_mb": "10",
     },
+    # Governance thresholds — mirrors migration 0006 seed (DEC-A05).
+    "governance": {
+        "confidence_escalation_min": "0.7",
+        "quality_score_min_for_autoticket": "0.6",
+        "severity_autoticket_threshold": "HIGH",
+        "max_rag_docs_to_expose": "5",
+        "kill_switch_enabled": "false",
+    },
 }
 
 # is_credential map matching the seed

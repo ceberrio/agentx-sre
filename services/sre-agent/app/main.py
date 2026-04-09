@@ -30,6 +30,7 @@ from app.api.routes_feedback import router as feedback_router
 from app.api.routes_health import router as health_router
 from app.api.routes_incidents import router as incidents_router
 from app.api.routes_llm_config import router as llm_config_router
+from app.api.routes_governance import router as governance_router
 from app.api.routes_platform_config import router as platform_config_router
 from app.api.routes_webhooks import router as webhooks_router
 from app.infrastructure.config import settings
@@ -142,6 +143,8 @@ app.include_router(feedback_router)
 app.include_router(llm_config_router)
 # Platform Configuration (HU-P032-A) — admin/superadmin only
 app.include_router(platform_config_router)
+# Governance thresholds (HU-12 / DEC-A05) — admin/superadmin only
+app.include_router(governance_router)
 
 
 # ----- OpenAPI dual-auth security schemes (HU-P018) -----

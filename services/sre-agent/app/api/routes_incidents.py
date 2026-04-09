@@ -43,6 +43,7 @@ _CASE_TO_INCIDENT_STATUS: dict = {
     "awaiting_resolution": "ticketed",
     "resolved": "resolved",
     "intake_blocked": "blocked",
+    "escalated": "blocked",
     "ticketed": "ticketed",
     "failed": "failed",
 }
@@ -88,6 +89,9 @@ def _build_post_graph_patch(final_state: dict) -> dict:
         blocked_reason = final_state.get("blocked_reason")
         if blocked_reason:
             patch["blocked_reason"] = blocked_reason
+    elif final_status_enum == CaseStatus.ESCALATED:
+        patch["blocked"] = True
+        patch["blocked_reason"] = final_state.get("blocked_reason", "escalated_by_governance")
 
     return patch
 
@@ -147,11 +151,27 @@ async def create_incident(
     await container.storage.save_incident(incident)
 
     graph = build_orchestrator_graph(container)
+
+    # Preload governance thresholds so router.should_escalate() stays pure (ARC-014).
+    try:
+        governance_raw: dict = await container.platform_config_provider.get_config("governance")
+    except Exception as gov_err:
+        log.warning(
+            "api.governance_config_load_failed",
+            extra={
+                "incident_id": incident.id,
+                "error": str(gov_err),
+                "fallback": "empty_governance_defaults_apply",
+            },
+        )
+        governance_raw = {}
+
     state: CaseState = {
         "case_id": incident.id,
         "incident": incident,
         "status": CaseStatus.NEW,
         "events": [],
+        "governance": governance_raw,
     }
     try:
         final_state = await graph.ainvoke(state)
@@ -175,7 +195,7 @@ async def create_incident(
             extra={"incident_id": incident.id, "error": str(persist_err)},
         )
 
-    is_blocked = final_status == CaseStatus.INTAKE_BLOCKED
+    is_blocked = final_status in (CaseStatus.INTAKE_BLOCKED, CaseStatus.ESCALATED)
     response: dict = {
         "incident_id": incident.id,
         "case_status": final_status.value if hasattr(final_status, "value") else str(final_status),

@@ -31,6 +31,7 @@ class CaseStatus(str, Enum):
     TRIAGED = "triaged"               # Triage Agent produced TriageResult
     TICKETED = "ticketed"             # Integration Agent created ticket
     NOTIFIED = "notified"             # Integration Agent notified team
+    ESCALATED = "escalated"           # escalated by governance policy
     AWAITING_RESOLUTION = "awaiting_resolution"  # async webhook pending
     RESOLVED = "resolved"             # Resolution Agent completed
     FAILED = "failed"                 # unrecoverable error
@@ -90,6 +91,7 @@ class CaseState(TypedDict, total=False):
 
     # Audit log — append-only list of events the orchestrator received
     events: list[AgentEvent]
+    governance: Optional[dict]  # preloaded by API layer for router purity (ARC-014)
 
 
 # ---------------------------------------------------------------------------

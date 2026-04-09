@@ -15,6 +15,7 @@ from app.orchestration.orchestrator.router import (
     ROUTE_END,
     ROUTE_INTEGRATION,
     ROUTE_TRIAGE,
+    EscalationDecision,
     route_after_intake,
     route_after_integration,
     route_after_triage,
@@ -81,9 +82,18 @@ class TestRouteAfterIntegration:
 
 
 class TestShouldEscalate:
-    """BR-01: Escalation policy is always False for hackathon scope."""
+    """BR-01: Sin governance activo, la política de escalación no escala."""
 
-    def test_should_escalate_always_false(self):
+    def test_should_escalate_returns_escalation_decision(self):
+        """El retorno es siempre una instancia de EscalationDecision."""
+        state = _make_state(status=CaseStatus.TRIAGED)
+        decision = should_escalate(state)
+        assert isinstance(decision, EscalationDecision)
+
+    def test_should_not_escalate_without_governance(self):
+        """Sin bloque 'governance' en el estado, escalate debe ser False."""
         for status in CaseStatus:
             state = _make_state(status=status)
-            assert should_escalate(state) is False
+            decision = should_escalate(state)
+            assert isinstance(decision, EscalationDecision)
+            assert decision.escalate is False

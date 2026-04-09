@@ -41,9 +41,11 @@ from app.orchestration.orchestrator.router import (
     ROUTE_END,
     ROUTE_INTEGRATION,
     ROUTE_TRIAGE,
+    EscalationDecision,
     route_after_integration,
     route_after_intake,
     route_after_triage,
+    should_escalate,
 )
 from app.orchestration.orchestrator.state import (
     AgentEvent,
@@ -186,6 +188,19 @@ async def _run_triage(state: CaseState, subgraph) -> CaseState:
         if triage_result is not None:
             state["incident"] = state["incident"].model_copy(
                 update={"severity": triage_result.severity}
+            )
+        # Escalation check — reads governance from state (pure, no I/O — ARC-014)
+        escalation = should_escalate(state)
+        if escalation.escalate:
+            state["status"] = CaseStatus.ESCALATED
+            state["blocked_reason"] = f"escalated_by_governance:{escalation.trigger}"
+            log.info(
+                "orchestrator.escalation_triggered",
+                extra={
+                    "case_id": state["case_id"],
+                    "trigger": escalation.trigger,
+                    "confidence": triage_result.confidence if triage_result else None,
+                },
             )
     elif event.kind == "agent.error":
         state["status"] = CaseStatus.FAILED
