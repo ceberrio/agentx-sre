@@ -10,6 +10,7 @@ import { FileText } from 'lucide-react'
 import axios from 'axios'
 import { apiClient } from '../api/client'
 import { useAuthStore } from '../store/authStore'
+import { useSecurityConfig } from '../api/hooks/useConfig'
 import { Layout } from '../components/ui/Layout'
 import { Card } from '../components/ui/Card'
 import { Button } from '../components/ui/Button'
@@ -30,8 +31,16 @@ const PIPELINE_STAGES = [
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
-const ACCEPTED_FILE_TYPES = ['.txt', '.log', '.json', '.csv']
-const MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024 // 5 MB
+const ACCEPTED_LOG_TYPES = ['.txt', '.log', '.json', '.csv']
+const ACCEPTED_IMAGE_TYPES = ['.jpg', '.jpeg', '.png', '.webp', '.gif']
+const ACCEPTED_FILE_TYPES = [...ACCEPTED_LOG_TYPES, ...ACCEPTED_IMAGE_TYPES]
+
+const IMAGE_EXTENSIONS = new Set(ACCEPTED_IMAGE_TYPES)
+
+function isImageFile(file: File): boolean {
+  const ext = '.' + (file.name.split('.').pop()?.toLowerCase() ?? '')
+  return IMAGE_EXTENSIONS.has(ext)
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -52,15 +61,17 @@ interface FormState {
   description: string
 }
 
-type FormErrors = Partial<Record<keyof FormState | 'logFile', string>>
+type FormErrors = Partial<Record<keyof FormState | 'attachedFile', string>>
 
 // ---------------------------------------------------------------------------
 // Validation
 // ---------------------------------------------------------------------------
 
 function validateField(
-  name: keyof FormState | 'logFile',
+  name: keyof FormState | 'attachedFile',
   value: string | File | null,
+  maxBytes: number,
+  maxUploadMb: number,
 ): string {
   switch (name) {
     case 'title': {
@@ -81,14 +92,12 @@ function validateField(
       if (v.length < 10) return 'Description must be at least 10 characters.'
       return ''
     }
-    case 'logFile': {
+    case 'attachedFile': {
       if (!value) return ''
       const file = value as File
-      if (file.size > MAX_FILE_SIZE_BYTES) return 'File exceeds the 5 MB size limit.'
-      const ext = '.' + file.name.split('.').pop()?.toLowerCase()
-      if (!ACCEPTED_FILE_TYPES.includes(ext)) {
-        return `Accepted formats: ${ACCEPTED_FILE_TYPES.join(', ')}.`
-      }
+      if (file.size > maxBytes) return `File exceeds maximum size of ${maxUploadMb} MB.`
+      const ext = '.' + (file.name.split('.').pop()?.toLowerCase() ?? '')
+      if (!ACCEPTED_FILE_TYPES.includes(ext)) return 'Unsupported file format.'
       return ''
     }
     default:
@@ -96,15 +105,20 @@ function validateField(
   }
 }
 
-function validateAll(form: FormState, logFile: File | null): FormErrors {
+function validateAll(
+  form: FormState,
+  attachedFile: File | null,
+  maxBytes: number,
+  maxUploadMb: number,
+): FormErrors {
   const errors: FormErrors = {}
   const fields: Array<keyof FormState> = ['title', 'reporter_email', 'description']
   for (const field of fields) {
-    const msg = validateField(field, form[field])
+    const msg = validateField(field, form[field], maxBytes, maxUploadMb)
     if (msg) errors[field] = msg
   }
-  const fileMsg = validateField('logFile', logFile)
-  if (fileMsg) errors.logFile = fileMsg
+  const fileMsg = validateField('attachedFile', attachedFile, maxBytes, maxUploadMb)
+  if (fileMsg) errors.attachedFile = fileMsg
   return errors
 }
 
@@ -119,13 +133,17 @@ function hasErrors(errors: FormErrors): boolean {
 export function NewIncidentPage() {
   const navigate = useNavigate()
   const user = useAuthStore((state) => state.user)
+  const { data: securityConfig } = useSecurityConfig()
+
+  const maxUploadMb = securityConfig?.max_upload_size_mb ?? 5
+  const maxUploadBytes = maxUploadMb * 1024 * 1024
 
   const [form, setForm] = useState<FormState>({
     title: '',
     reporter_email: user?.email ?? '',
     description: '',
   })
-  const [logFile, setLogFile] = useState<File | null>(null)
+  const [attachedFile, setAttachedFile] = useState<File | null>(null)
   const [errors, setErrors] = useState<FormErrors>({})
   const [submitting, setSubmitting] = useState(false)
   const [stageIndex, setStageIndex] = useState(0)
@@ -164,15 +182,15 @@ export function NewIncidentPage() {
   }
 
   function handleFieldBlur(name: keyof FormState) {
-    const msg = validateField(name, form[name])
+    const msg = validateField(name, form[name], maxUploadBytes, maxUploadMb)
     setErrors((prev) => ({ ...prev, [name]: msg }))
   }
 
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0] ?? null
-    setLogFile(file)
-    const msg = validateField('logFile', file)
-    setErrors((prev) => ({ ...prev, logFile: msg }))
+    setAttachedFile(file)
+    const msg = validateField('attachedFile', file, maxUploadBytes, maxUploadMb)
+    setErrors((prev) => ({ ...prev, attachedFile: msg }))
   }
 
   function startStageTimer() {
@@ -193,7 +211,7 @@ export function NewIncidentPage() {
     e.preventDefault()
     setSubmitError(null)
 
-    const validationErrors = validateAll(form, logFile)
+    const validationErrors = validateAll(form, attachedFile, maxUploadBytes, maxUploadMb)
     if (hasErrors(validationErrors)) {
       setErrors(validationErrors)
       return
@@ -207,8 +225,12 @@ export function NewIncidentPage() {
       fd.append('reporter_email', form.reporter_email.trim())
       fd.append('title', form.title.trim())
       fd.append('description', form.description.trim())
-      if (logFile) {
-        fd.append('log_file', logFile)
+      if (attachedFile) {
+        if (isImageFile(attachedFile)) {
+          fd.append('image', attachedFile)
+        } else {
+          fd.append('log_file', attachedFile)
+        }
       }
 
       const response = await apiClient.post<CreateIncidentResponse>('/incidents', fd, {
@@ -223,7 +245,7 @@ export function NewIncidentPage() {
         if (typeof detail === 'string' && detail.length > 0) {
           message = detail
         } else if (err.response?.status === 413) {
-          message = 'The uploaded file is too large. Maximum allowed size is 5 MB.'
+          message = `The uploaded file is too large. Maximum allowed size is ${maxUploadMb} MB.`
         } else if (err.response?.status === 422) {
           message = 'Invalid form data. Please check all fields and try again.'
         }
@@ -354,10 +376,10 @@ export function NewIncidentPage() {
               )}
             </div>
 
-            {/* Log file upload */}
+            {/* Attachment upload */}
             <div className="flex flex-col gap-1">
               <label className="text-sm font-medium text-neutral-700 font-montserrat">
-                Log File{' '}
+                Attachment{' '}
                 <span className="text-neutral-400 font-normal">(optional)</span>
               </label>
               <input
@@ -366,18 +388,18 @@ export function NewIncidentPage() {
                 onChange={handleFileChange}
                 className="text-sm text-neutral-700 font-montserrat file:mr-3 file:py-1.5 file:px-3 file:rounded-sm file:border-0 file:text-xs file:font-medium file:bg-brand-lighter file:text-brand-primary hover:file:bg-brand-primary hover:file:text-white file:transition-colors file:duration-150"
               />
-              {logFile && !errors.logFile && (
+              {attachedFile && !errors.attachedFile && (
                 <p className="text-xs text-neutral-500 font-montserrat">
-                  {logFile.name} ({(logFile.size / 1024).toFixed(1)} KB)
+                  {attachedFile.name} ({(attachedFile.size / 1024).toFixed(1)} KB)
                 </p>
               )}
-              {errors.logFile && (
+              {errors.attachedFile && (
                 <p role="alert" className="text-sm text-semantic-error">
-                  {errors.logFile}
+                  {errors.attachedFile}
                 </p>
               )}
               <p className="text-xs text-neutral-400 font-montserrat">
-                Accepted formats: .txt, .log, .json, .csv. Maximum size: 5 MB.
+                Accepted formats: logs (.txt, .log, .json, .csv) or images (.jpg, .png, .webp, .gif). Maximum size: {maxUploadMb} MB.
               </p>
             </div>
 
