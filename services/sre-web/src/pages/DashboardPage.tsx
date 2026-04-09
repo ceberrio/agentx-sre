@@ -5,6 +5,7 @@
  * All text in English (AC-12, BR-06).
  */
 import { useState, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   DndContext,
   type DragEndEvent,
@@ -32,7 +33,10 @@ import {
 import { Layout } from '../components/ui/Layout'
 import { Card } from '../components/ui/Card'
 import { StatusBadge } from '../components/ui/Badge'
+import { Spinner } from '../components/ui/Spinner'
 import { useConfigStore } from '../store/configStore'
+import { useIncidents } from '../api/hooks/useIncidents'
+import { useLLMConfig } from '../api/hooks/useConfig'
 import type { Incident } from '../api/types'
 
 // ---- Widget definitions ----
@@ -75,13 +79,22 @@ function saveWidgetOrder(order: WidgetId[]) {
 
 // ---- Individual widget content ----
 
-function IncidentSummaryContent() {
+interface IncidentSummaryProps {
+  incidents: Incident[] | undefined
+  isLoading: boolean
+}
+
+function IncidentSummaryContent({ incidents, isLoading }: IncidentSummaryProps) {
+  const total = isLoading || !incidents ? '—' : String(incidents.length)
+  const open = isLoading || !incidents ? '—' : String(incidents.filter((i) => i.status !== 'resolved').length)
+  const resolved = isLoading || !incidents ? '—' : String(incidents.filter((i) => i.status === 'resolved').length)
+
   return (
     <div className="grid grid-cols-3 gap-4">
       {[
-        { label: 'Total', value: '—', icon: <Activity size={18} className="text-brand-primary" /> },
-        { label: 'Open', value: '—', icon: <AlertTriangle size={18} className="text-semantic-warning" /> },
-        { label: 'Resolved', value: '—', icon: <CheckCircle size={18} className="text-semantic-success" /> },
+        { label: 'Total', value: total, icon: <Activity size={18} className="text-brand-primary" /> },
+        { label: 'Open', value: open, icon: <AlertTriangle size={18} className="text-semantic-warning" /> },
+        { label: 'Resolved', value: resolved, icon: <CheckCircle size={18} className="text-semantic-success" /> },
       ].map(({ label, value, icon }) => (
         <div key={label} className="flex flex-col items-center gap-1 py-2">
           {icon}
@@ -93,8 +106,14 @@ function IncidentSummaryContent() {
   )
 }
 
-function SystemStatusContent() {
+interface SystemStatusProps {
+  llmProvider: string | undefined
+  llmLoading: boolean
+}
+
+function SystemStatusContent({ llmProvider, llmLoading }: SystemStatusProps) {
   const killSwitchEnabled = useConfigStore((s) => s.killSwitchEnabled)
+  const providerLabel = llmLoading ? '—' : (llmProvider ?? '—')
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
@@ -103,7 +122,7 @@ function SystemStatusContent() {
       </div>
       <div className="flex items-center justify-between">
         <span className="text-sm text-neutral-600 font-montserrat">LLM Provider</span>
-        <span className="text-sm font-medium text-neutral-700 font-montserrat">Azure OpenAI</span>
+        <span className="text-sm font-medium text-neutral-700 font-montserrat">{providerLabel}</span>
       </div>
       <div className="flex items-center justify-between">
         <span className="text-sm text-neutral-600 font-montserrat">RAG Context</span>
@@ -113,17 +132,63 @@ function SystemStatusContent() {
   )
 }
 
-const EMPTY_INCIDENTS: Incident[] = []
+interface RecentIncidentsProps {
+  incidents: Incident[] | undefined
+  isLoading: boolean
+}
 
-function RecentIncidentsContent() {
-  if (EMPTY_INCIDENTS.length === 0) {
+function formatIncidentDate(dateStr: string): string {
+  const date = new Date(dateStr)
+  return date.toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  })
+}
+
+function RecentIncidentsContent({ incidents, isLoading }: RecentIncidentsProps) {
+  const navigate = useNavigate()
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-6">
+        <Spinner size="sm" label="Loading..." />
+      </div>
+    )
+  }
+
+  if (!incidents || incidents.length === 0) {
     return (
       <div className="flex items-center justify-center py-6 text-neutral-400">
         <p className="text-sm font-montserrat">No recent incidents.</p>
       </div>
     )
   }
-  return null
+
+  const recent = [...incidents]
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+    .slice(0, 5)
+
+  return (
+    <div className="space-y-2">
+      {recent.map((incident) => (
+        <button
+          key={incident.id}
+          type="button"
+          onClick={() => navigate('/incidents/' + incident.id)}
+          className="w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded hover:bg-neutral-50 transition-colors text-left"
+        >
+          <span className="text-sm text-neutral-700 font-montserrat flex-1 truncate">{incident.title}</span>
+          <StatusBadge status={incident.status} />
+          <span className="text-xs text-neutral-400 font-montserrat whitespace-nowrap">
+            {formatIncidentDate(incident.created_at)}
+          </span>
+        </button>
+      ))}
+    </div>
+  )
 }
 
 const AGENT_LIST = [
@@ -150,12 +215,23 @@ function AgentHealthContent() {
   )
 }
 
-function widgetContent(id: WidgetId) {
+interface WidgetDataProps {
+  incidents: Incident[] | undefined
+  incidentsLoading: boolean
+  llmProvider: string | undefined
+  llmLoading: boolean
+}
+
+function widgetContent(id: WidgetId, data: WidgetDataProps) {
   switch (id) {
-    case 'incident-summary': return <IncidentSummaryContent />
-    case 'system-status': return <SystemStatusContent />
-    case 'recent-incidents': return <RecentIncidentsContent />
-    case 'agent-health': return <AgentHealthContent />
+    case 'incident-summary':
+      return <IncidentSummaryContent incidents={data.incidents} isLoading={data.incidentsLoading} />
+    case 'system-status':
+      return <SystemStatusContent llmProvider={data.llmProvider} llmLoading={data.llmLoading} />
+    case 'recent-incidents':
+      return <RecentIncidentsContent incidents={data.incidents} isLoading={data.incidentsLoading} />
+    case 'agent-health':
+      return <AgentHealthContent />
     default:
       // TypeScript exhaustive check — this branch is never reached at runtime
       throw new Error(`Unknown widget id: ${String(id)}`)
@@ -166,9 +242,10 @@ function widgetContent(id: WidgetId) {
 
 interface SortableWidgetProps {
   def: WidgetDef
+  widgetData: WidgetDataProps
 }
 
-function SortableWidget({ def }: SortableWidgetProps) {
+function SortableWidget({ def, widgetData }: SortableWidgetProps) {
   const {
     attributes,
     listeners,
@@ -203,7 +280,7 @@ function SortableWidget({ def }: SortableWidgetProps) {
           </button>
         }
       >
-        {widgetContent(def.id)}
+        {widgetContent(def.id, widgetData)}
       </Card>
     </div>
   )
@@ -213,6 +290,17 @@ function SortableWidget({ def }: SortableWidgetProps) {
 
 export function DashboardPage() {
   const [widgetOrder, setWidgetOrder] = useState<WidgetId[]>(loadWidgetOrder)
+
+  // Fetch shared data once — passed as props to avoid duplicate fetches across widgets
+  const { data: incidentsData, isLoading: incidentsLoading } = useIncidents()
+  const { data: llmData, isLoading: llmLoading } = useLLMConfig()
+
+  const widgetData: WidgetDataProps = {
+    incidents: incidentsData,
+    incidentsLoading,
+    llmProvider: llmData?.config?.provider,
+    llmLoading,
+  }
 
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -248,7 +336,7 @@ export function DashboardPage() {
         <SortableContext items={widgetOrder} strategy={rectSortingStrategy}>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {orderedDefs.map((def) => (
-              <SortableWidget key={def.id} def={def} />
+              <SortableWidget key={def.id} def={def} widgetData={widgetData} />
             ))}
           </div>
         </SortableContext>

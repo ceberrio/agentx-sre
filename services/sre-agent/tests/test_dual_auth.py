@@ -290,6 +290,9 @@ class TestApiKeyBackwardCompat:
     def test_api_key_grants_superadmin_synthetic_user(self):
         """AC-04: X-API-Key produces a synthetic SUPERADMIN user (can resolve incidents)."""
         incident = _make_incident("inc-apikey-resolve")
+        # The resolve endpoint guards against resolving un-ticketed incidents (409).
+        # Set a ticket_id so the guard passes and we test only the auth path.
+        incident.ticket_id = "t-001"
         storage = _make_storage_with(incident)
 
         app_container = MagicMock()
@@ -504,11 +507,17 @@ class TestResolveIncidentRoleMatrix:
     """AC-09: Verify operator-minimum enforcement on resolve endpoint."""
 
     def _resolve_with_role(self, role: UserRole) -> int:
-        user = make_user(role=role)
+        # For OPERATOR the IDOR guard requires reporter_email == user.email.
+        # Use a fixed email so both sides align.
+        _email = "tester@sre.com" if role == UserRole.OPERATOR else f"{role.value}@sre.com"
+        user = make_user(role=role, email=_email)
         container = build_jwt_container(current_user=user)
         token = make_jwt_for_user(user)
 
         incident = _make_incident("inc-role-test")
+        # resolve endpoint guards un-ticketed incidents with 409 — set ticket_id so
+        # we test the role-check path, not the business-state guard.
+        incident.ticket_id = "t-001"
         storage = _make_storage_with(incident)
         app_container = MagicMock()
         app_container.storage = storage

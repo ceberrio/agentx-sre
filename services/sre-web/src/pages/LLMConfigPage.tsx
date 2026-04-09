@@ -30,6 +30,33 @@ const FALLBACK_PROVIDER_OPTIONS = [
   { value: 'stub', label: 'Stub (Testing)' },
 ]
 
+// CR-010: predefined model options per provider. Providers not listed use free-text input.
+const MODEL_OPTIONS: Record<string, { value: string; label: string }[]> = {
+  anthropic: [
+    { value: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5 (fast, efficient)' },
+    { value: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6 (balanced)' },
+    { value: 'claude-opus-4-6', label: 'Claude Opus 4.6 (most capable)' },
+  ],
+  openai: [
+    { value: 'gpt-4o', label: 'GPT-4o (most capable)' },
+    { value: 'gpt-4o-mini', label: 'GPT-4o Mini (fast, efficient)' },
+    { value: 'gpt-4-turbo', label: 'GPT-4 Turbo' },
+  ],
+  gemini: [
+    { value: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash (fast)' },
+    { value: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro (balanced)' },
+  ],
+}
+
+function getModelHelperText(prov: string): string {
+  switch (prov) {
+    case 'azure_openai': return 'e.g. gpt-4o'
+    case 'openrouter': return 'e.g. mistralai/mistral-7b-instruct'
+    case 'stub': return 'e.g. stub-model'
+    default: return 'Model name as recognized by the provider API.'
+  }
+}
+
 export function LLMConfigPage() {
   const { data, isLoading, isError, error } = useLLMConfig()
   const update = useUpdateLLMConfig()
@@ -48,6 +75,13 @@ export function LLMConfigPage() {
   const [warnMsg, setWarnMsg] = useState<string | null>(null)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
 
+  // CR-007: cleanup-safe auto-dismiss for success banner
+  useEffect(() => {
+    if (!successMsg) return
+    const timer = setTimeout(() => setSuccessMsg(null), 4000)
+    return () => clearTimeout(timer)
+  }, [successMsg])
+
   useEffect(() => {
     if (!data) return
     const cfg = data.config
@@ -61,6 +95,28 @@ export function LLMConfigPage() {
     setCbCooldown(cfg.circuit_breaker_cooldown_s ?? 60)
     setTimeoutS(cfg.timeout_s ?? 30)
   }, [data])
+
+  // CR-010: auto-select first model when primary provider changes to one with predefined options
+  const handleProviderChange = useCallback((newProvider: string) => {
+    setProvider(newProvider)
+    const options = MODEL_OPTIONS[newProvider]
+    if (options && options.length > 0) {
+      setModel(options[0].value)
+    } else {
+      setModel('')
+    }
+  }, [])
+
+  // CR-010: auto-select first model when fallback provider changes to one with predefined options
+  const handleFallbackProviderChange = useCallback((newProvider: string) => {
+    setFallbackProvider(newProvider)
+    const options = MODEL_OPTIONS[newProvider]
+    if (options && options.length > 0) {
+      setFallbackModel(options[0].value)
+    } else {
+      setFallbackModel('')
+    }
+  }, [])
 
   const handleSave = useCallback(async () => {
     setSuccessMsg(null)
@@ -88,7 +144,6 @@ export function LLMConfigPage() {
         setSuccessMsg(
           `Configuration saved and LLM reloaded successfully. (${result.elapsed_ms}ms)`
         )
-        setTimeout(() => setSuccessMsg(null), 4000)
       }
     } catch (err: unknown) {
       setErrorMsg(getApiErrorDetail(err, 'Failed to save configuration.'))
@@ -167,16 +222,27 @@ export function LLMConfigPage() {
                 label="Primary Provider"
                 options={PROVIDER_OPTIONS}
                 value={provider}
-                onChange={(e) => setProvider(e.target.value)}
+                onChange={(e) => handleProviderChange(e.target.value)}
               />
-              <Input
-                label="Primary Model"
-                type="text"
-                placeholder="gemini-2.0-flash-lite"
-                value={model}
-                onChange={(e) => setModel(e.target.value)}
-                helperText="Model name as recognized by the provider API."
-              />
+              {/* CR-010: dropdown for providers with predefined models, free text otherwise */}
+              {MODEL_OPTIONS[provider]?.length > 0 ? (
+                <Select
+                  label="Primary Model"
+                  options={MODEL_OPTIONS[provider]}
+                  value={model}
+                  onChange={(e) => setModel(e.target.value)}
+                  helperText="Select the model for the primary provider."
+                />
+              ) : (
+                <Input
+                  label="Primary Model"
+                  type="text"
+                  placeholder={getModelHelperText(provider)}
+                  value={model}
+                  onChange={(e) => setModel(e.target.value)}
+                  helperText={getModelHelperText(provider)}
+                />
+              )}
               <Input
                 label="Primary API Key"
                 type="password"
@@ -191,20 +257,31 @@ export function LLMConfigPage() {
                   label="Fallback Provider"
                   options={FALLBACK_PROVIDER_OPTIONS}
                   value={fallbackProvider}
-                  onChange={(e) => setFallbackProvider(e.target.value)}
+                  onChange={(e) => handleFallbackProviderChange(e.target.value)}
                   helperText="Provider used when the primary provider fails or circuit breaker trips."
                 />
               </div>
               {fallbackProvider && fallbackProvider !== 'none' && (
                 <>
-                  <Input
-                    label="Fallback Model"
-                    type="text"
-                    placeholder="gpt-4o-mini"
-                    value={fallbackModel}
-                    onChange={(e) => setFallbackModel(e.target.value)}
-                    helperText="Model name for the fallback provider."
-                  />
+                  {/* CR-010: dropdown for fallback provider with predefined models */}
+                  {MODEL_OPTIONS[fallbackProvider]?.length > 0 ? (
+                    <Select
+                      label="Fallback Model"
+                      options={MODEL_OPTIONS[fallbackProvider]}
+                      value={fallbackModel}
+                      onChange={(e) => setFallbackModel(e.target.value)}
+                      helperText="Select the model for the fallback provider."
+                    />
+                  ) : (
+                    <Input
+                      label="Fallback Model"
+                      type="text"
+                      placeholder={getModelHelperText(fallbackProvider)}
+                      value={fallbackModel}
+                      onChange={(e) => setFallbackModel(e.target.value)}
+                      helperText={getModelHelperText(fallbackProvider)}
+                    />
+                  )}
                   <Input
                     label="Fallback API Key"
                     type="password"

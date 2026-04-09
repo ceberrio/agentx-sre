@@ -10,8 +10,11 @@ Role-based access control for resolve is tested separately in test_dual_auth.py.
 from __future__ import annotations
 
 import asyncio
+import uuid
+from contextlib import contextmanager
+from datetime import datetime, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -31,43 +34,49 @@ from app.domain.ports import IStorageProvider
 
 
 # ---------------------------------------------------------------------------
-# Auth bypass — OPERATOR role (minimum required for resolve)
+# Auth bypass — ADMIN role (minimum required for resolve without IDOR guard)
 # ---------------------------------------------------------------------------
 
-
-def _bypass_auth_as_operator(app: FastAPI) -> None:
-    """Override both auth and require_role to inject an operator user."""
-    import uuid
-    from datetime import datetime, timezone
-
-    _user = User(
+def _make_admin_user() -> User:
+    """Build a reusable ADMIN user for auth bypass."""
+    return User(
         id=uuid.UUID("00000000-0000-0000-0000-000000000010"),
-        email="operator@sre-agent.internal",
-        full_name="Test Operator",
-        role=UserRole.OPERATOR,
+        email="admin@sre-agent.internal",
+        full_name="Test Admin",
+        role=UserRole.ADMIN,
         is_active=True,
         created_at=datetime.now(timezone.utc),
     )
 
+
+@contextmanager
+def _bypass_auth_as_admin(app: FastAPI):
+    """Context manager: override dual-auth and require_role to inject an ADMIN user.
+
+    Using ADMIN (not OPERATOR) skips the IDOR guard which would return 404
+    when the operator email does not match the incident reporter email.
+    TC-U-INC-015 tests the HTTP resolve path, not RBAC — role matrix tests
+    live in test_dual_auth.py::TestResolveIncidentRoleMatrix.
+
+    Uses patch() as a context manager to guarantee cleanup on both success
+    and failure paths — no manual restore needed (CR-015, CR-017).
+    """
+    _user = _make_admin_user()
+
     async def _no_auth() -> User:
         return _user
-
-    # Override dual-auth dependency
-    app.dependency_overrides[deps.get_current_user_or_api_key] = _no_auth
-
-    # Override require_role factory: the resolve route uses
-    # require_role(OPERATOR, FLOW_CONFIGURATOR, ADMIN, SUPERADMIN).
-    # We patch require_role at module level so the closure returns _user directly.
-    original_require_role = deps.require_role
 
     def _mock_require_role(*roles):
         async def _check() -> User:
             return _user
         return _check
 
-    deps.require_role = _mock_require_role
-    # Store restore function on app so tests can clean up if needed
-    app._restore_require_role = lambda: setattr(deps, "require_role", original_require_role)
+    app.dependency_overrides[deps.get_current_user_or_api_key] = _no_auth
+    try:
+        with patch.object(deps, "require_role", side_effect=_mock_require_role):
+            yield
+    finally:
+        app.dependency_overrides.pop(deps.get_current_user_or_api_key, None)
 
 
 # ---------------------------------------------------------------------------
@@ -163,6 +172,9 @@ def test_resolve_existing_incident_returns_200():
     - Response body contains status="resolved"
     """
     incident = _make_incident("incident-resolve-ok")
+    # Resolve endpoint guards un-ticketed incidents with 409. Provide a ticket_id
+    # so the test exercises the resolution path, not the pre-condition guard.
+    incident.ticket_id = "ticket-resolve-001"
     container = _make_container(incident)
 
     from app.api.routes_incidents import router as incidents_router
@@ -170,7 +182,6 @@ def test_resolve_existing_incident_returns_200():
 
     app = FastAPI()
     app.include_router(incidents_router)
-    _bypass_auth_as_operator(app)
 
     # Mock the resolution graph — we test the HTTP layer, not the graph
     mock_graph = MagicMock()
@@ -184,19 +195,15 @@ def test_resolve_existing_incident_returns_200():
 
     client = TestClient(app, raise_server_exceptions=False)
     with (
-        __import__("unittest.mock", fromlist=["patch"]).patch(
+        _bypass_auth_as_admin(app),
+        patch(
             "app.api.routes_incidents.get_container", return_value=container
         ),
-        __import__("unittest.mock", fromlist=["patch"]).patch(
+        patch(
             "app.api.routes_incidents.build_resolution_graph", return_value=mock_graph
         ),
     ):
         response = client.post("/incidents/incident-resolve-ok/resolve")
-
-    try:
-        app._restore_require_role()
-    except AttributeError:
-        pass
 
     assert response.status_code == 200, (
         f"Expected 200, got {response.status_code}. Body: {response.text}"
@@ -229,18 +236,15 @@ def test_resolve_nonexistent_incident_returns_404():
 
     app = FastAPI()
     app.include_router(incidents_router)
-    _bypass_auth_as_operator(app)
 
     client = TestClient(app, raise_server_exceptions=False)
-    with __import__("unittest.mock", fromlist=["patch"]).patch(
-        "app.api.routes_incidents.get_container", return_value=container
+    with (
+        _bypass_auth_as_admin(app),
+        patch(
+            "app.api.routes_incidents.get_container", return_value=container
+        ),
     ):
         response = client.post("/incidents/does-not-exist-99999/resolve")
-
-    try:
-        app._restore_require_role()
-    except AttributeError:
-        pass
 
     assert response.status_code == 404, (
         f"Expected 404, got {response.status_code}. Body: {response.text}"
