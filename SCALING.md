@@ -9,10 +9,11 @@
 | Component | What it is now | Why it's fine for the demo |
 |---|---|---|
 | `sre-agent` | Single FastAPI container | Simplest deployable unit, fastest iteration |
+| `sre-web` | React 18 SPA served by Nginx (port 5173) | Full management UI — incidents, config, governance, users |
 | `mock-services` | In-process mock of GitLab Issues + webhook + email | Judges can see the full E2E flow without depending on external SaaS keys |
-| Storage | In-memory Python dict | Demo lifetime is minutes, not days |
-| Auth | None | Single-user demo |
-| Resolution trigger | Manual button → `POST /tickets/:id/resolve` | Avoids needing a real ticketing webhook for the demo (see below) |
+| Storage | PostgreSQL via SQLAlchemy + Alembic (default) | Production-ready schema from day 1 — migrations in `alembic/versions/` |
+| Auth | Mock Google OAuth + JWT HS256 + RBAC (5 roles) | Full auth flow without requiring a real Google OAuth app — swap in Authlib for production |
+| Resolution trigger | Manual button → `POST /incidents/:id/resolve` | Avoids needing a real ticketing webhook for the demo (see below) |
 | Observability | Self-hosted Langfuse | Visual proof of the 6 stages for judges |
 
 ---
